@@ -1,0 +1,36 @@
+cameras:
+  - name: hallway
+    host: 192.168.68.54
+    port: 554
+    path: /stream1
+    protocol: rtsp
+    username: your_username
+    password: your_password
+  - name: living_room_1
+    host: 192.168.68.64
+    port: 554
+    path: /stream1
+    protocol: rtsp
+    username: your_username
+    password: your_password
+  - name: living_room_2
+    host: 192.168.68.59
+    port: 554
+    path: /stream1
+    protocol: rtsp
+    username: your_username
+    password: your_password
+  - name: main_bedroom
+    host: 192.168.68.61
+    port: 554
+    path: /stream1
+    protocol: rtsp
+    username: your_username
+    password: your_password
+  - name: house_front
+    host: 192.168.68.63
+    port: 554
+    path: /stream1
+    protocol: rtsp
+    username: your_username
+    password: your_password

@@ -1,0 +1,30 @@
+services:
+  config-gen:
+    build: { context: ., target: config-gen }
+    volumes:
+      - ./cameras.yaml:/app/cameras.yaml:ro
+      - go2rtc-data:/app/go2rtc
+    environment:
+      - HOST_IP=${HOST_IP:-}
+
+  go2rtc:
+    image: alexxit/go2rtc
+    restart: unless-stopped
+    depends_on:
+      config-gen: { condition: service_completed_successfully }
+    ports:
+      - "1984:1984"
+      - "8555:8555/tcp"
+      - "8555:8555/udp"
+    volumes:
+      - go2rtc-data:/config
+
+  web:
+    build: { context: ., target: web }
+    restart: unless-stopped
+    depends_on: [go2rtc]
+    ports:
+      - "80:80"
+
+volumes:
+  go2rtc-data:
