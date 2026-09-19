@@ -1,73 +1,35 @@
-# React + TypeScript + Vite
+# Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This is the React client of the IP Camera Viewer. It shows every camera in a grid.
+It plays each stream with WebRTC. It falls back to MSE and then to HLS.
 
-Currently, two official plugins are available:
+## Commands
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+| Task | Command |
+|------|---------|
+| Start the dev server | `npm run dev` |
+| Build for production | `npm run build` |
+| Check the code style | `npm run lint` |
 
-## React Compiler
+The dev server needs go2rtc on port 1984. Start go2rtc first.
+Set `GO2RTC_URL` to use a different address.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Data source
 
-## Expanding the ESLint configuration
+The client reads the camera list from `/cameras.json`.
+The script `scripts/generate-config.mjs` writes this file into `frontend/public/`.
+Run that script before you start the dev server.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+The file holds camera names and stream names only. It holds no camera password.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Player
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+The file `src/lib/video-rtc.js` is a vendored copy of VideoRTC v1.6.0.
+This copy has 3 local changes:
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- The element keeps an `AbortController` in the field `lifecycle`.
+- The element keeps the viewport observer in the field `observer`.
+- The element has a `destroy()` method. The method releases every listener, timer and connection.
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+The file `src/lib/camera-video.ts` extends that class. It defines the element `camera-video`.
+It sets the LAN defaults, and it reports the stream status.

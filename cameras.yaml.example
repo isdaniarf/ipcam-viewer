@@ -1,36 +1,33 @@
 cameras:
   - name: hallway
     host: 192.168.68.54
-    port: 554
-    path: /stream1
-    protocol: rtsp
-    username: your_username
-    password: your_password
+    username: your_camera_account
+    password: your_camera_password
+    rtsp:
+      port: 554
+      path: /stream1
+      sub_path: /stream2
+    onvif:
+      port: 2020
+
   - name: living_room_1
+    label: Living Room
     host: 192.168.68.64
-    port: 554
-    path: /stream1
-    protocol: rtsp
-    username: your_username
-    password: your_password
-  - name: living_room_2
-    host: 192.168.68.59
-    port: 554
-    path: /stream1
-    protocol: rtsp
-    username: your_username
-    password: your_password
-  - name: main_bedroom
-    host: 192.168.68.61
-    port: 554
-    path: /stream1
-    protocol: rtsp
-    username: your_username
-    password: your_password
+    username: your_camera_account
+    password: your_camera_password
+    rtsp:
+      port: 554
+      path: /stream1
+      sub_path: /stream2
+
   - name: house_front
     host: 192.168.68.63
-    port: 554
-    path: /stream1
-    protocol: rtsp
-    username: your_username
-    password: your_password
+    username: your_camera_account
+    password: your_camera_password
+    rtsp:
+      port: 554
+      path: /stream1
+      sub_path: /stream2
+    tapo:
+      username: your_tplink_account_email
+      password: your_tplink_cloud_password

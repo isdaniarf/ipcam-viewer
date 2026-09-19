@@ -1,0 +1,36 @@
+export declare class VideoRTC extends HTMLElement {
+  DISCONNECT_TIMEOUT: number;
+  RECONNECT_TIMEOUT: number;
+  CODECS: string[];
+  mode: string;
+  media: string;
+  background: boolean;
+  visibilityThreshold: number;
+  visibilityCheck: boolean;
+  pcConfig: RTCConfiguration;
+  wsState: number;
+  pcState: number;
+  ws: WebSocket | null;
+  wsURL: string;
+  pc: RTCPeerConnection | null;
+  video: HTMLVideoElement;
+  connectTS: number;
+  mseCodecs: string;
+  disconnectTID: number;
+  reconnectTID: number;
+  ondata: ((data: ArrayBuffer) => void) | null;
+  onmessage: Record<string, (msg: Record<string, string>) => void> | null;
+  lifecycle: AbortController;
+  observer: IntersectionObserver | null;
+  src: string;
+  play(): void;
+  send(value: unknown): void;
+  destroy(): void;
+  connectedCallback(): void;
+  disconnectedCallback(): void;
+  oninit(): void;
+  onconnect(): boolean;
+  ondisconnect(): void;
+  onopen(): string[];
+  onclose(): boolean;
+}

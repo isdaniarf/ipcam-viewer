@@ -140,6 +140,42 @@ export class VideoRTC extends HTMLElement {
          * @type {Object.<string,Function>}
          */
         this.onmessage = null;
+
+        /**
+         * [internal] Aborts listeners owned by this element.
+         * @type {AbortController}
+         */
+        this.lifecycle = new AbortController();
+
+        /**
+         * [internal] Viewport observer owned by this element.
+         * @type {IntersectionObserver}
+         */
+        this.observer = null;
+    }
+
+    /**
+     * Release every listener, timer and connection owned by this element.
+     */
+    destroy() {
+        this.lifecycle.abort();
+
+        if (this.observer) {
+            this.observer.disconnect();
+            this.observer = null;
+        }
+
+        if (this.disconnectTID) {
+            clearTimeout(this.disconnectTID);
+            this.disconnectTID = 0;
+        }
+
+        if (this.reconnectTID) {
+            clearTimeout(this.reconnectTID);
+            this.reconnectTID = 0;
+        }
+
+        if (this.video) this.ondisconnect();
     }
 
     /**
@@ -265,7 +301,7 @@ export class VideoRTC extends HTMLElement {
                 currentTime: this.video.currentTime
             });
             if (this.ws) this.ws.close(); // run reconnect for broken MSE stream
-        });
+        }, {signal: this.lifecycle.signal});
 
         // all Safari lies about supported audio codecs
         const m = window.navigator.userAgent.match(/Version\/(\d+).+Safari/);
@@ -284,11 +320,11 @@ export class VideoRTC extends HTMLElement {
                 } else if (this.isConnected) {
                     this.connectedCallback();
                 }
-            });
+            }, {signal: this.lifecycle.signal});
         }
 
         if ('IntersectionObserver' in window && this.visibilityThreshold) {
-            const observer = new IntersectionObserver(entries => {
+            this.observer = new IntersectionObserver(entries => {
                 entries.forEach(entry => {
                     if (!entry.isIntersecting) {
                         this.disconnectedCallback();
@@ -297,7 +333,7 @@ export class VideoRTC extends HTMLElement {
                     }
                 });
             }, {threshold: this.visibilityThreshold});
-            observer.observe(this);
+            this.observer.observe(this);
         }
     }
 

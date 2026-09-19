@@ -1,9 +1,12 @@
 # Credentials
 cameras.yaml
+cameras.yaml.bak
 .env
 
 # Generated
 go2rtc/go2rtc.yaml
+go2rtc/cameras.json
+frontend/public/cameras.json
 
 # Binary
 go2rtc/go2rtc

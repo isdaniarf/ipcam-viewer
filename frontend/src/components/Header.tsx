@@ -1,4 +1,4 @@
-import type { Protocol } from "../types/camera";
+import { PROTOCOL_LABELS, type Protocol } from "../types/camera";
 
 interface HeaderProps {
   cameraCount: number;
@@ -7,12 +7,6 @@ interface HeaderProps {
   onProtocolChange: (protocol: Protocol) => void;
 }
 
-const PROTOCOL_LABELS: Record<Protocol, string> = {
-  rtsp: "RTSP",
-  onvif: "ONVIF",
-  tapo: "Tapo",
-};
-
 export function Header({
   cameraCount,
   availableProtocols,
@@ -20,7 +14,7 @@ export function Header({
   onProtocolChange,
 }: HeaderProps) {
   return (
-    <header className="flex items-center justify-between px-6 py-4">
+    <header className="flex flex-wrap items-center justify-between gap-3 px-6 py-4">
       <div className="flex items-center gap-4">
         <h1 className="text-xl font-semibold text-white">IP Camera Viewer</h1>
         <span className="text-sm text-gray-400">
@@ -29,18 +23,19 @@ export function Header({
       </div>
 
       {availableProtocols.length > 1 && (
-        <div className="flex rounded-lg bg-gray-900 p-1">
-          {availableProtocols.map((proto) => (
+        <div className="flex rounded-lg bg-gray-900 p-1" role="group" aria-label="Stream protocol">
+          {availableProtocols.map((protocol) => (
             <button
-              key={proto}
-              onClick={() => onProtocolChange(proto)}
+              key={protocol}
+              onClick={() => onProtocolChange(protocol)}
+              aria-pressed={protocol === selectedProtocol}
               className={`rounded-md px-3 py-1 text-sm font-medium transition-colors ${
-                proto === selectedProtocol
+                protocol === selectedProtocol
                   ? "bg-gray-700 text-white"
                   : "text-gray-400 hover:text-gray-200"
               }`}
             >
-              {PROTOCOL_LABELS[proto]}
+              {PROTOCOL_LABELS[protocol]}
             </button>
           ))}
         </div>

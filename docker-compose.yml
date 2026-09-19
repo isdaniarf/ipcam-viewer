@@ -8,23 +8,31 @@ services:
       - HOST_IP=${HOST_IP:-}
 
   go2rtc:
-    image: alexxit/go2rtc
+    image: alexxit/go2rtc:1.9.14
     restart: unless-stopped
     depends_on:
       config-gen: { condition: service_completed_successfully }
     ports:
-      - "1984:1984"
       - "8555:8555/tcp"
       - "8555:8555/udp"
     volumes:
       - go2rtc-data:/config
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:1984/api"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
 
   web:
     build: { context: ., target: web }
     restart: unless-stopped
-    depends_on: [go2rtc]
+    depends_on:
+      go2rtc: { condition: service_healthy }
     ports:
       - "80:80"
+    volumes:
+      - go2rtc-data:/srv/go2rtc:ro
 
 volumes:
   go2rtc-data:
