@@ -20,44 +20,136 @@ It plays each stream with WebRTC. It falls back to MSE, and then to HLS.
 
 ## Requirements
 
-On the machine where you build:
+- macOS or Linux, on the machine that runs the viewer.
+- Node.js 22, for the first install. It writes your camera config and builds the page.
+- Cameras that speak RTSP, ONVIF or Tapo, on the same network.
 
-- Node.js 22.
-- `unzip`, for the macOS and Windows go2rtc archives.
+The service runs as a launchd agent on macOS, or as a systemd unit on Linux. The installer adds an
+`ipcam` command to your PATH. Later machines need no Node.js.
 
-On the machine that runs the viewer: nothing. The bundle holds the binary, the page and the config.
-The installer uses launchd on macOS and systemd on Linux, and it adds the `ipcam` command to your PATH.
+## Install
 
-## Quick start
+The viewer needs two things: the program, and a config that lists your cameras.
 
-1. Copy the template and add your cameras. See [Camera configuration](#camera-configuration).
+You write the config once, in `cameras.yaml`. A script turns it into the file that the program reads.
+That file holds your camera passwords, so it never ships in a release, and you keep it on your own
+machines.
+
+### Set up the first machine
+
+1. Clone this repository.
+
+```bash
+git clone https://github.com/isdaniarf/ipcam-viewer.git
+cd ipcam-viewer
+```
+
+2. Copy the template and add your cameras. See [Camera configuration](#camera-configuration).
+   Run `node scripts/discover-cameras.mjs` first when you do not know their addresses.
 
 ```bash
 cp cameras.yaml.example cameras.yaml
 ```
 
-2. Install the build dependencies once.
+3. Install the build dependencies once.
 
 ```bash
 cd scripts && npm install && cd ../frontend && npm install && cd ..
 ```
 
-3. Build the bundle. The script builds the page, downloads go2rtc for this machine, and writes the config.
+4. Build the bundle. The script builds the page, downloads go2rtc for this machine, and writes the config.
 
 ```bash
 node scripts/bundle.mjs
 ```
 
-4. Install the service. This also adds the `ipcam` command to your PATH.
+5. Install the service. This also adds the `ipcam` command to your PATH.
 
 ```bash
 ./bundle/ipcam install
 ```
 
-5. Open the address that the installer prints. Log in with the user and the password from `server:` in `cameras.yaml`.
+6. Open the address that the installer prints. Log in with the user and the password from `server:` in `cameras.yaml`.
 
 The bundle is self-contained. Keep the `bundle/` directory in place after the install, because the
 service runs go2rtc from there.
+
+### Add more machines
+
+A machine that only runs the viewer needs no clone and no Node.js. One command installs the program:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/isdaniarf/ipcam-viewer/main/install.sh | sh
+```
+
+It detects the platform, downloads the release and the matching go2rtc binary, installs into
+`~/.local/share/ipcam-viewer`, and links the `ipcam` command.
+
+Then give it the config that you made on the first machine. Export it there, send the file over a
+private channel, and import it here:
+
+```bash
+ipcam config export ~/ipcam-config.tgz     # on the first machine
+ipcam config import ~/ipcam-config.tgz     # on the new machine
+ipcam install
+```
+
+`ipcam upgrade` installs a newer release later and keeps the config.
+
+### Installer options
+
+| Variable | Effect |
+|----------|--------|
+| `IPCAM_VERSION` | Install a fixed tag instead of the newest release. |
+| `IPCAM_PREFIX` | Install into another directory. Default: `~/.local/share/ipcam-viewer`. |
+| `IPCAM_BIN_DIR` | Link the command into another directory. Default: `~/.local/bin`. |
+
+Read the script before you pipe it into a shell. Pin a tag with `IPCAM_VERSION` when you want a
+reproducible install.
+
+### Copy a bundle instead
+
+You can also skip the release and copy a complete bundle, config included. Build it for the target
+platform, then copy the directory.
+
+```bash
+node scripts/bundle.mjs --platform linux_arm64 --out bundle-pi
+scp -r bundle-pi pi@192.168.1.20:~/ipcam-viewer
+ssh pi@192.168.1.20 '~/ipcam-viewer/ipcam install'
+```
+
+AirDrop, a USB disk or a shared folder work as well. The bundle is about 18 MB, because it carries
+the go2rtc binary. It also carries your camera passwords, so treat it as a secret.
+
+macOS marks a file that arrives through AirDrop or a browser download with a quarantine flag, and
+Gatekeeper then blocks the unsigned go2rtc binary. `ipcam install` removes that flag, so the copy runs.
+
+Both Macs must use the same processor family. Build with `--platform mac_amd64` for an Intel Mac.
+The same flow works for Linux with `--platform linux_arm64`, where the installer needs `sudo` for the
+systemd unit.
+
+Supported platforms: `mac_arm64`, `mac_amd64`, `linux_amd64`, `linux_arm64`, `linux_arm`,
+`linux_armv6` and `linux_i386`.
+
+### Bundle options
+
+| Option | Effect |
+|--------|--------|
+| `--platform <name>` | Build for another platform. Default: this machine. |
+| `--out <dir>` | Write the bundle to another directory. Default: `bundle/`. |
+| `--version <x.y.z>` | Use another go2rtc release. Default: `1.9.14`. |
+| `--binary <path>` | Use a local go2rtc binary. No download. |
+| `--skip-build` | Keep the current `frontend/dist`. |
+
+The script keeps the downloaded binary when its version matches.
+
+### One server, many viewers
+
+You do not need the program on every device. Any phone, tablet or laptop on the network opens the
+address in a browser.
+
+Install it a second time only when you want a spare server. Each installation opens its own RTSP
+connection to every camera, and most cameras accept only two or three at a time.
 
 ## The ipcam command
 
@@ -87,79 +179,6 @@ Edit `cameras.yaml`, then apply the change.
 ```bash
 ipcam update
 ```
-
-## Install on another Mac
-
-The second machine needs no Node.js, no repository and no Homebrew. One command installs the runtime:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/isdaniarf/ipcam-viewer/main/install.sh | sh
-```
-
-It detects the platform, downloads the release and the matching go2rtc binary, installs into
-`~/.local/share/ipcam-viewer`, and links the `ipcam` command.
-
-Then give it your config. The config holds the camera passwords, so it never goes into a release.
-Export it on a machine that already runs the viewer, send the file over a private channel, and import it:
-
-```bash
-ipcam config export ~/ipcam-config.tgz     # on the machine that already runs
-ipcam config import ~/ipcam-config.tgz     # on the new machine
-ipcam install
-```
-
-`ipcam upgrade` installs a newer release later and keeps the config.
-
-### Installer options
-
-| Variable | Effect |
-|----------|--------|
-| `IPCAM_VERSION` | Install a fixed tag instead of the newest release. |
-| `IPCAM_PREFIX` | Install into another directory. Default: `~/.local/share/ipcam-viewer`. |
-| `IPCAM_BIN_DIR` | Link the command into another directory. Default: `~/.local/bin`. |
-
-Read the script before you pipe it into a shell. Pin a tag with `IPCAM_VERSION` when you want a
-reproducible install.
-
-### Build the bundle yourself
-
-The repository can also produce a bundle without a release. Copy the directory to the other machine.
-
-```bash
-node scripts/bundle.mjs
-scp -r bundle your-mac.local:~/ipcam-viewer
-ssh your-mac.local '~/ipcam-viewer/ipcam install'
-```
-
-AirDrop, a USB disk or a shared folder work as well. The bundle is about 18 MB.
-
-macOS marks a file that arrives through AirDrop or a browser download with a quarantine flag, and
-Gatekeeper then blocks the unsigned go2rtc binary. `ipcam install` removes that flag, so the copy runs.
-
-Both Macs must use the same processor family. Build with `--platform mac_amd64` for an Intel Mac.
-The same flow works for Linux with `--platform linux_arm64`, where the installer needs `sudo` for the
-systemd unit.
-
-Supported platforms: `mac_arm64`, `mac_amd64`, `linux_amd64`, `linux_arm64`, `linux_arm`,
-`linux_armv6` and `linux_i386`.
-
-### One server, many viewers
-
-Each installation opens its own RTSP connection to every camera. Most cameras accept only two or
-three at a time. Run the server on one machine, and open its address from the other devices. Install
-the bundle on a second Mac when you want a spare server, not a second viewer.
-
-### Bundle options
-
-| Option | Effect |
-|--------|--------|
-| `--platform <name>` | Build for another platform. Default: this machine. |
-| `--out <dir>` | Write the bundle to another directory. Default: `bundle/`. |
-| `--version <x.y.z>` | Use another go2rtc release. Default: `1.9.14`. |
-| `--binary <path>` | Use a local go2rtc binary. No download. |
-| `--skip-build` | Keep the current `frontend/dist`. |
-
-The script keeps the downloaded binary when its version matches.
 
 ## Camera configuration
 

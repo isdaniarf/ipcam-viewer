@@ -116,8 +116,17 @@ if [ -f "$PREFIX/go2rtc.yaml" ]; then
   "$PREFIX/ipcam" install --no-link
 else
   say ""
-  say "Next: copy your config from a machine that already runs the viewer."
+  say "No camera config yet. It lists your cameras and holds their passwords,"
+  say "so it never ships in a release."
+  say ""
+  say "If another machine already runs the viewer, copy the config from it:"
   say "  there:  ipcam config export ~/ipcam-config.tgz"
   say "  here:   ipcam config import ~/ipcam-config.tgz"
   say "  then:   ipcam install"
+  say ""
+  say "Otherwise make one. It needs Node.js 22:"
+  say "  git clone https://github.com/$REPO.git && cd ipcam-viewer"
+  say "  cp cameras.yaml.example cameras.yaml   # then add your cameras"
+  say "  cd scripts && npm install && cd ../frontend && npm install && cd .."
+  say "  node scripts/bundle.mjs && ./bundle/ipcam install"
 fi
