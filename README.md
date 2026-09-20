@@ -16,7 +16,7 @@ It plays each stream with WebRTC. It falls back to MSE, and then to HLS.
 - One process at run time. go2rtc serves the page, the camera list and the streams.
 - A password protects the page and the streams.
 - An `ipcam` command controls the service from anywhere in your shell.
-- A self-contained bundle. Copy one directory to another machine and run one command.
+- A one-line install from a GitHub release. The config stays on your machines.
 
 ## Requirements
 
@@ -72,6 +72,8 @@ The command then works from anywhere.
 | `ipcam logs` | Follow the service log |
 | `ipcam url` | Print the address and the viewer user name |
 | `ipcam update [--build]` | Rebuild the config from `cameras.yaml`, then restart |
+| `ipcam config show\|export\|import` | Show, export or import the config |
+| `ipcam upgrade` | Install the newest release, and keep the config |
 | `ipcam uninstall` | Stop the service, remove it, and remove the link |
 | `ipcam version` | Show the bundle and go2rtc versions |
 
@@ -88,10 +90,43 @@ ipcam update
 
 ## Install on another Mac
 
-The second machine needs no Node.js, no repository and no Homebrew. Copy the bundle and install it.
+The second machine needs no Node.js, no repository and no Homebrew. One command installs the runtime:
 
 ```bash
-node scripts/bundle.mjs              # on the machine that holds the sources
+curl -fsSL https://raw.githubusercontent.com/isdaniarf/ipcam-viewer/main/install.sh | sh
+```
+
+It detects the platform, downloads the release and the matching go2rtc binary, installs into
+`~/.local/share/ipcam-viewer`, and links the `ipcam` command.
+
+Then give it your config. The config holds the camera passwords, so it never goes into a release.
+Export it on a machine that already runs the viewer, send the file over a private channel, and import it:
+
+```bash
+ipcam config export ~/ipcam-config.tgz     # on the machine that already runs
+ipcam config import ~/ipcam-config.tgz     # on the new machine
+ipcam install
+```
+
+`ipcam upgrade` installs a newer release later and keeps the config.
+
+### Installer options
+
+| Variable | Effect |
+|----------|--------|
+| `IPCAM_VERSION` | Install a fixed tag instead of the newest release. |
+| `IPCAM_PREFIX` | Install into another directory. Default: `~/.local/share/ipcam-viewer`. |
+| `IPCAM_BIN_DIR` | Link the command into another directory. Default: `~/.local/bin`. |
+
+Read the script before you pipe it into a shell. Pin a tag with `IPCAM_VERSION` when you want a
+reproducible install.
+
+### Build the bundle yourself
+
+The repository can also produce a bundle without a release. Copy the directory to the other machine.
+
+```bash
+node scripts/bundle.mjs
 scp -r bundle your-mac.local:~/ipcam-viewer
 ssh your-mac.local '~/ipcam-viewer/ipcam install'
 ```
@@ -291,7 +326,8 @@ a different address. Requests from the host skip the password, so the dev server
 | Task | Command |
 |------|---------|
 | Build the bundle | `node scripts/bundle.mjs` |
-| Install the service | `./bundle/ipcam install` |
+| Install from a release | `curl -fsSL https://raw.githubusercontent.com/isdaniarf/ipcam-viewer/main/install.sh \| sh` |
+| Install from a local bundle | `./bundle/ipcam install` |
 | Control the service | `ipcam [start\|stop\|restart\|status\|logs\|url\|update\|uninstall]` |
 | Generate the configuration only | `node scripts/generate-config.mjs [--target native\|docker]` |
 | Find cameras on the LAN | `node scripts/discover-cameras.mjs [--help]` |
@@ -331,6 +367,8 @@ Tailscale address of the host.
 | `scripts/bundle.mjs` | It builds the self-contained bundle for a platform. |
 | `scripts/discover-cameras.mjs` | It finds cameras on the LAN with WS-Discovery and a port sweep. |
 | `scripts/native/` | The `ipcam` command, and the launchd and systemd templates for the bundle. |
+| `install.sh` | The `curl \| sh` entry point. It installs a published release. |
+| `.github/workflows/release.yml` | It builds and publishes a release on a `v*` tag. |
 | `bundle/` | The generated bundle. Git ignores this directory. |
 | `nginx/nginx.conf` | The nginx config for the Docker layout. |
 | `docker-compose.yml` | The Docker layout: `config-gen`, `go2rtc` and `web`. |

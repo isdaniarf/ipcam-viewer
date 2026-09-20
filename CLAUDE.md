@@ -30,6 +30,8 @@ Multi-camera IP video streaming viewer. React frontend talks to go2rtc for RTSP/
 │   ├── bundle.mjs              # Builds the self-contained native bundle: binary + www + config
 │   ├── discover-cameras.mjs    # WS-Discovery + port sweep, prints model and auth state per host
 │   └── native/                 # ipcam CLI, launchd plist and systemd unit templates
+├── install.sh                  # curl | sh entry point; installs a published release
+├── .github/workflows/release.yml  # builds + publishes platform archives on a v* tag
 ├── bundle/                     # Generated native bundle (gitignored)
 ├── nginx/
 │   └── nginx.conf              # Serves frontend, proxies /api/ws and /api/hls
@@ -71,7 +73,7 @@ server:                    # native layout only, ignored by --target docker
 cameras:
   - name: hallway          # letters, digits, "_" and "-" only
     label: Hallway         # optional, the UI derives it from the name
-    host: 192.168.68.54
+    host: 192.168.1.54
     username: camera_account
     password: camera_password
     rtsp:
@@ -172,6 +174,10 @@ It accepts a comma-separated list.
 - `ipcam install` runs `xattr -d com.apple.quarantine` on the binary and on itself. Without that,
   Gatekeeper silently blocks the unsigned go2rtc binary on a Mac that received the bundle by AirDrop
   or by download. Verified: a quarantined binary produces no output at all.
+- Release archives hold `ipcam`, `www/`, `service/` and `build-info` only. No binary and no config:
+  `install.sh` reads `go2rtc=` from `build-info` and fetches that binary from go2rtc's own upstream release.
+- The config never ships in a release. `ipcam config export|import` moves `go2rtc.yaml` plus
+  `cameras.json` between machines as a tarball.
 - `bundle/build-info` records `repo=`, so `ipcam update` can call the generator on the build machine.
   It fails with a clear message on a machine that has no repository or no Node.js.
 - `camera-video.ts` retries the WebRTC offer with backoff (5 s to 60 s) after a `webrtc/offer` error from

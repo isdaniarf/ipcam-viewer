@@ -1,0 +1,59 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to publish
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build the frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Assemble the platform archives
+        run: |
+          set -eu
+          GO2RTC_VERSION=$(sed -n 's/^const DEFAULT_VERSION = "\(.*\)";$/\1/p' scripts/bundle.mjs | head -1)
+          test -n "$GO2RTC_VERSION"
+          mkdir -p dist
+          for platform in mac_arm64 mac_amd64 linux_amd64 linux_arm64 linux_arm; do
+            stage="stage/$platform"
+            mkdir -p "$stage/service"
+            cp -R frontend/dist "$stage/www"
+            cp scripts/native/ipcam scripts/native/install.sh "$stage/"
+            cp scripts/native/launchd.plist scripts/native/systemd.service "$stage/service/"
+            chmod +x "$stage/ipcam" "$stage/install.sh"
+            printf 'platform=%s\ngo2rtc=%s\nbuilt=%s\nversion=%s\n' \
+              "$platform" "$GO2RTC_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${GITHUB_REF_NAME:-dev}" > "$stage/build-info"
+            tar -czf "dist/ipcam-viewer-$platform.tar.gz" -C "$stage" .
+          done
+          ls -l dist
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          gh release create "$tag" dist/*.tar.gz \
+            --repo "${{ github.repository }}" \
+            --title "$tag" \
+            --generate-notes \
+            || gh release upload "$tag" dist/*.tar.gz --repo "${{ github.repository }}" --clobber

@@ -83,7 +83,7 @@ allow_unsigned_binary() {
 
 require_bundle() {
   [ -x "$BUNDLE_DIR/go2rtc" ] || die "no go2rtc binary in $BUNDLE_DIR"
-  [ -f "$CONFIG" ] || die "no go2rtc.yaml in $BUNDLE_DIR"
+  [ -f "$CONFIG" ] || die "no go2rtc.yaml in $BUNDLE_DIR. Run: ipcam config import <file.tgz>"
 }
 
 render() {
@@ -259,6 +259,78 @@ cmd_update() {
   cmd_restart
 }
 
+config_files() { printf 'go2rtc.yaml cameras.json\n'; }
+
+service_is_this_bundle() {
+  if [ "$OS" = macos ]; then
+    [ -f "$(plist_path)" ] || return 1
+    grep -q "$BUNDLE_DIR/go2rtc" "$(plist_path)" 2>/dev/null
+  else
+    [ -f "$(unit_path)" ] || return 1
+    grep -q "$BUNDLE_DIR/go2rtc" "$(unit_path)" 2>/dev/null
+  fi
+}
+
+cmd_config() {
+  action=${1:-show}
+  [ $# -gt 0 ] && shift || true
+  case $action in
+    export)
+      target=${1:-$(pwd)/ipcam-config.tgz}
+      case $target in /*) ;; *) target=$(pwd)/$target ;; esac
+      [ -f "$CONFIG" ] || die "no go2rtc.yaml in $BUNDLE_DIR"
+      ( cd "$BUNDLE_DIR" && tar -czf "$target" $(config_files) )
+      echo "Wrote $target"
+      echo "It holds the camera passwords and the viewer password. Send it over a private channel."
+      ;;
+    import|"")
+      source=${1:-}
+      [ -n "$source" ] || die "usage: ipcam config import <file.tgz|go2rtc.yaml|url>"
+      scratch=$(mktemp -d)
+      case $source in
+        http://*|https://*)
+          curl -fsSL "$source" -o "$scratch/download" || die "could not download $source"
+          source=$scratch/download
+          ;;
+        *) [ -f "$source" ] || die "no such file: $source" ;;
+      esac
+      if tar -tzf "$source" >/dev/null 2>&1; then
+        tar -xzf "$source" -C "$scratch"
+      else
+        cp "$source" "$scratch/go2rtc.yaml"
+      fi
+      [ -f "$scratch/go2rtc.yaml" ] || { rm -rf "$scratch"; die "the config holds no go2rtc.yaml"; }
+      grep -q "^api:" "$scratch/go2rtc.yaml" || { rm -rf "$scratch"; die "go2rtc.yaml has no api: block"; }
+      cp "$scratch/go2rtc.yaml" "$BUNDLE_DIR/go2rtc.yaml"
+      if [ -f "$scratch/cameras.json" ]; then
+        cp "$scratch/cameras.json" "$BUNDLE_DIR/cameras.json"
+        [ -d "$BUNDLE_DIR/www" ] && cp "$scratch/cameras.json" "$BUNDLE_DIR/www/cameras.json"
+      fi
+      rm -rf "$scratch"
+      echo "Config installed in $BUNDLE_DIR"
+      if service_is_this_bundle; then
+        "$SELF" restart
+      else
+        echo "Next: ipcam install"
+      fi
+      ;;
+    show)
+      echo "Config:  $CONFIG"
+      echo "Listen:  $(listen_address)"
+      echo "User:    $(viewer_user)"
+      echo "Cameras: $(sed -n 's/.*"name": "\([^"]*\)".*/\1/p' "$BUNDLE_DIR/cameras.json" 2>/dev/null | tr '\n' ' ')"
+      ;;
+    *) die "unknown config action \"$action\". Use export, import or show." ;;
+  esac
+}
+
+cmd_upgrade() {
+  command -v curl >/dev/null 2>&1 || die "curl is not installed"
+  url="https://raw.githubusercontent.com/isdaniarf/ipcam-viewer/main/install.sh"
+  echo "Fetching the installer from $url"
+  IPCAM_PREFIX="$BUNDLE_DIR" IPCAM_KEEP_CONFIG=1 sh -c "curl -fsSL '$url' | sh" || die "the upgrade failed"
+}
+
 cmd_version() {
   echo "bundle:   $BUNDLE_DIR"
   echo "platform: $(build_info platform || echo unknown)"
@@ -279,6 +351,8 @@ Usage: ipcam <command> [options]
   logs                 Follow the service log
   url                  Print the address and the viewer user name
   update [--build]     Rebuild the config from cameras.yaml, then restart
+  config <action>      show, export <file.tgz>, or import <file.tgz|yaml|url>
+  upgrade              Install the newest release, and keep the config
   link                 Link this command into PATH
   unlink               Remove the link
   version              Show the bundle and go2rtc versions
@@ -301,6 +375,8 @@ case $command_name in
   logs) "logs_$OS" ;;
   url) cmd_url ;;
   update) cmd_update "$@" ;;
+  config) cmd_config "$@" ;;
+  upgrade) cmd_upgrade ;;
   link) do_link ;;
   unlink) do_unlink ;;
   version) cmd_version ;;
