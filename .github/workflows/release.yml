@@ -49,8 +49,9 @@ jobs:
             cp scripts/lib/config-model.mjs scripts/lib/ini.mjs "$stage/scripts/lib/"
             cp scripts/native/launchd.plist scripts/native/systemd.service "$stage/service/"
             chmod +x "$stage/ipcam" "$stage/install.sh"
-            printf 'platform=%s\ngo2rtc=%s\nbuilt=%s\nversion=%s\n' \
-              "$platform" "$GO2RTC_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${GITHUB_REF_NAME:-dev}" > "$stage/build-info"
+            printf 'platform=%s\ngo2rtc=%s\nbuilt=%s\nversion=%s\ncommit=%s\n' \
+              "$platform" "$GO2RTC_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${GITHUB_REF_NAME:-dev}" \
+              "$(printf '%s' "${GITHUB_SHA:-}" | cut -c1-7)" > "$stage/build-info"
             tar -czf "dist/ipcam-viewer-$platform.tar.gz" -C "$stage" .
           done
           ls -l dist

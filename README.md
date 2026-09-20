@@ -200,7 +200,7 @@ The command then works from anywhere.
 | `ipcam config show\|export\|import` | Show, export or import the config. Import takes a `.tgz`, a `cameras.ini` or a `go2rtc.yaml` |
 | `ipcam upgrade` | Install the newest release, and keep the config |
 | `ipcam uninstall` | Stop the service, remove it, and remove the link |
-| `ipcam version` | Show the bundle and go2rtc versions |
+| `ipcam version` | Show the app, bundle and go2rtc versions |
 
 `ipcam update` reads the `cameras.ini` next to the installed bundle and needs nothing else. Pass
 `--build` to rebuild the web page as well, which needs the repository and Node.js.

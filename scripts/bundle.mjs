@@ -114,6 +114,19 @@ async function downloadBinary(platform, version, destination) {
   rmSync(scratch, { recursive: true, force: true });
 }
 
+function gitOutput(args) {
+  const result = spawnSync("git", args, { cwd: root, encoding: "utf-8" });
+  return result.status === 0 ? result.stdout.trim() : "";
+}
+
+function appVersion() {
+  return gitOutput(["describe", "--tags", "--always", "--dirty"]) || "dev";
+}
+
+function appCommit() {
+  return gitOutput(["rev-parse", "--short", "HEAD"]) || "unknown";
+}
+
 function writeBundleReadme(outDir, platform, version) {
   const text = `IP Camera Viewer, native bundle
 Platform: ${platform}, go2rtc ${version}
@@ -179,7 +192,15 @@ async function main() {
   }
   writeFileSync(
     resolve(outDir, "build-info"),
-    [`repo=${root}`, `platform=${platform}`, `go2rtc=${version}`, `built=${new Date().toISOString()}`, ""].join("\n"),
+    [
+      `repo=${root}`,
+      `platform=${platform}`,
+      `go2rtc=${version}`,
+      `built=${new Date().toISOString()}`,
+      `version=${appVersion()}`,
+      `commit=${appCommit()}`,
+      "",
+    ].join("\n"),
   );
   writeBundleReadme(outDir, platform, version);
 

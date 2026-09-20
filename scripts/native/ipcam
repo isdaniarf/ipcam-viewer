@@ -590,6 +590,13 @@ cmd_upgrade() {
 }
 
 cmd_version() {
+  app=$(build_info version || printf 'dev')
+  commit=$(build_info commit || printf '')
+  if [ -n "$commit" ]; then
+    echo "ipcam-viewer $app ($commit)"
+  else
+    echo "ipcam-viewer $app"
+  fi
   echo "bundle:   $BUNDLE_DIR"
   echo "platform: $(build_info platform || echo unknown)"
   echo "built:    $(build_info built || echo unknown)"
@@ -619,7 +626,7 @@ Usage: ipcam <command> [options]
   upgrade              Install the newest release, and keep the config
   link                 Link this command into PATH
   unlink               Remove the link
-  version              Show the bundle and go2rtc versions
+  version              Show the app, bundle and go2rtc versions
   help                 Show this text
 
 The link goes to ~/.local/bin by default. Set IPCAM_BIN_DIR to change it.
@@ -644,7 +651,7 @@ case $command_name in
   upgrade) cmd_upgrade ;;
   link) do_link ;;
   unlink) do_unlink ;;
-  version) cmd_version ;;
+  version|--version|-v) cmd_version ;;
   help|-h|--help) cmd_help ;;
   *) echo "ipcam: unknown command \"$command_name\"" >&2; cmd_help >&2; exit 1 ;;
 esac
