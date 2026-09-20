@@ -384,7 +384,7 @@ docker compose up --build
 
 `HOST_IP` in `.env` is mandatory here. The container cannot detect the host addresses, so the
 generator writes `HOST_IP` as the WebRTC candidate. Separate several addresses with a comma.
-The Docker layout has no password. The `server:` block is ignored.
+The Docker layout has no password. The `[server]` section is ignored.
 
 ## Development
 
@@ -433,7 +433,7 @@ Run `ipcam logs`. A common cause is another program on port 80. A port below 102
 on some systems. Set `listen = :8080` under `[server]` in `cameras.ini`, then run `ipcam update`.
 
 **A tile stays on "Connecting" or shows "Offline".**
-Check that the camera answers on its RTSP port. Check the `path` value.
+Check that the camera answers on its RTSP port. Check the `rtsp.path` value.
 
 **The browser shows no camera.**
 Run `ipcam update` and read the generator output.
