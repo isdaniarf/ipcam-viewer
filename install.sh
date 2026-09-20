@@ -71,6 +71,7 @@ case $ASSET in
     binary=$(find "$SCRATCH/go2rtc-unpacked" -type f -name go2rtc | head -1)
     [ -n "$binary" ] || die "the go2rtc archive holds no binary"
     mv "$binary" "$SCRATCH/go2rtc"
+    rm -rf "$SCRATCH/$ASSET" "$SCRATCH/go2rtc-unpacked"
     ;;
   *) mv "$SCRATCH/$ASSET" "$SCRATCH/go2rtc" ;;
 esac
