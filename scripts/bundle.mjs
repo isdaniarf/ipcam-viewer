@@ -118,10 +118,9 @@ function writeBundleReadme(outDir, platform, version) {
   const text = `IP Camera Viewer, native bundle
 Platform: ${platform}, go2rtc ${version}
 
-Install the service:      ./install.sh
-Show the service state:   ./install.sh status
-Restart the service:      ./install.sh restart
-Remove the service:       ./install.sh uninstall
+Install:  ./ipcam install     Installs the service, starts it, and adds "ipcam" to your PATH.
+Then:     ipcam status | logs | restart | url | update | uninstall
+Help:     ./ipcam help
 
 The service runs go2rtc from this directory. Keep the directory in place after the install.
 Log file on macOS: go2rtc.log in this directory. On Linux: journalctl -u ipcam-viewer -f
@@ -159,8 +158,14 @@ async function main() {
   const native = resolve(root, "scripts", "native");
   copyFileSync(resolve(native, "launchd.plist"), resolve(serviceDir, "launchd.plist"));
   copyFileSync(resolve(native, "systemd.service"), resolve(serviceDir, "systemd.service"));
-  copyFileSync(resolve(native, "install.sh"), resolve(outDir, "install.sh"));
-  chmodSync(resolve(outDir, "install.sh"), 0o755);
+  for (const name of ["ipcam", "install.sh"]) {
+    copyFileSync(resolve(native, name), resolve(outDir, name));
+    chmodSync(resolve(outDir, name), 0o755);
+  }
+  writeFileSync(
+    resolve(outDir, "build-info"),
+    [`repo=${root}`, `platform=${platform}`, `go2rtc=${version}`, `built=${new Date().toISOString()}`, ""].join("\n"),
+  );
   writeBundleReadme(outDir, platform, version);
 
   const result = generate({ target: "native", outDir, staticDir: "www" });
@@ -168,7 +173,7 @@ async function main() {
 
   console.log("");
   console.log(`Bundle ready: ${outDir}`);
-  console.log(`Next: ${resolve(outDir, "install.sh")}`);
+  console.log(`Next: ${resolve(outDir, "ipcam")} install`);
 }
 
 main().catch((error) => {

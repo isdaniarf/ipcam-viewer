@@ -29,7 +29,7 @@ Multi-camera IP video streaming viewer. React frontend talks to go2rtc for RTSP/
 │   ├── generate-config.mjs     # Reads cameras.yaml → writes go2rtc.yaml + cameras.json
 │   ├── bundle.mjs              # Builds the self-contained native bundle: binary + www + config
 │   ├── discover-cameras.mjs    # WS-Discovery + port sweep, prints model and auth state per host
-│   └── native/                 # launchd, systemd and install.sh templates for the bundle
+│   └── native/                 # ipcam CLI, launchd plist and systemd unit templates
 ├── bundle/                     # Generated native bundle (gitignored)
 ├── nginx/
 │   └── nginx.conf              # Serves frontend, proxies /api/ws and /api/hls
@@ -52,7 +52,7 @@ Two layouts exist. The native layout is the primary one.
 - **Native** — go2rtc alone. It serves `www/` (the built frontend and `cameras.json`) through
   `api.static_dir` on `server.listen` (default `:80`). Basic auth from `server.username` and
   `server.password` protects every path. Requests from the host itself skip the auth. A launchd
-  agent or a systemd unit keeps it running. `scripts/bundle.mjs` builds it, `bundle/install.sh` installs it.
+  agent or a systemd unit keeps it running. `scripts/bundle.mjs` builds it, `bundle/ipcam install` installs it.
 - **Docker** — go2rtc on `:1984` inside the Docker network, nginx on `:80` in front. nginx serves the
   frontend and proxies `/api/ws` and `/api/hls` only. No auth. The generator runs with `--target docker`.
 
@@ -109,12 +109,14 @@ network, because `GET /api/streams` and `GET /api/config` show the camera passwo
 ```bash
 cd scripts && npm install && cd ../frontend && npm install && cd ..
 node scripts/bundle.mjs            # builds frontend, downloads go2rtc, writes bundle/
-./bundle/install.sh                # launchd on macOS, systemd on Linux; also restart|uninstall|status
+./bundle/ipcam install             # launchd on macOS, systemd on Linux; links ipcam into ~/.local/bin
+ipcam status | logs | restart | url | update | uninstall
 ```
 
 `bundle/` holds `go2rtc` (binary), `go2rtc.yaml` (with `static_dir: www`, relative), `www/`,
-`service/` templates, `install.sh` and `README.txt`. It is relocatable: the service file sets the
-working directory to the bundle path. `--platform linux_arm64` etc. builds for another host.
+`service/` templates, `ipcam`, an `install.sh` shim, `build-info` and `README.txt`. It is relocatable:
+the service file sets the working directory to the bundle path, and `ipcam` resolves `$0` through
+symlinks to find its own bundle, so the PATH link works from anywhere. `--platform linux_arm64` etc. builds for another host.
 The generator omits `webrtc.candidates` for the native target unless `server.candidates` or
 `HOST_IP` is set. go2rtc then trickles its own host addresses, verified against 1.9.14.
 
@@ -167,6 +169,11 @@ It accepts a comma-separated list.
 - go2rtc basic auth exempts loopback requests. The Vite dev server therefore needs no login, and any
   process on the host can read `/api/config`. `GET /api/streams` and `GET /api/config` show camera passwords.
 - `bundle.mjs` reuses `bundle/go2rtc` when `./go2rtc --version` matches `--version` and the platform is the host.
+- `ipcam install` runs `xattr -d com.apple.quarantine` on the binary and on itself. Without that,
+  Gatekeeper silently blocks the unsigned go2rtc binary on a Mac that received the bundle by AirDrop
+  or by download. Verified: a quarantined binary produces no output at all.
+- `bundle/build-info` records `repo=`, so `ipcam update` can call the generator on the build machine.
+  It fails with a clear message on a machine that has no repository or no Node.js.
 - `camera-video.ts` retries the WebRTC offer with backoff (5 s to 60 s) after a `webrtc/offer` error from
   go2rtc, because the vendored library otherwise stays on MSE until a reload. Seen on cold starts.
 - `generate-config.mjs` uses the `yaml` npm package (in `scripts/package.json`)
@@ -181,7 +188,7 @@ It accepts a comma-separated list.
 | Task | Command |
 |------|---------|
 | Build native bundle | `node scripts/bundle.mjs [--platform X] [--skip-build]` |
-| Install / restart service | `./bundle/install.sh [install\|restart\|uninstall\|status]` |
+| Install / control service | `./bundle/ipcam install`, then `ipcam [start\|stop\|restart\|status\|logs\|update\|uninstall]` |
 | Dev server | `cd frontend && npm run dev` |
 | Build frontend | `cd frontend && npm run build` |
 | Lint | `cd frontend && npm run lint` |

@@ -15,6 +15,8 @@ It plays each stream with WebRTC. It falls back to MSE, and then to HLS.
 - Low bandwidth use. The grid plays the substream. It pauses a tile when the tile leaves the screen.
 - One process at run time. go2rtc serves the page, the camera list and the streams.
 - A password protects the page and the streams.
+- An `ipcam` command controls the service from anywhere in your shell.
+- A self-contained bundle. Copy one directory to another machine and run one command.
 
 ## Requirements
 
@@ -24,7 +26,7 @@ On the machine where you build:
 - `unzip`, for the macOS and Windows go2rtc archives.
 
 On the machine that runs the viewer: nothing. The bundle holds the binary, the page and the config.
-The installer uses launchd on macOS and systemd on Linux.
+The installer uses launchd on macOS and systemd on Linux, and it adds the `ipcam` command to your PATH.
 
 ## Quick start
 
@@ -46,38 +48,71 @@ cd scripts && npm install && cd ../frontend && npm install && cd ..
 node scripts/bundle.mjs
 ```
 
-4. Install the service.
+4. Install the service. This also adds the `ipcam` command to your PATH.
 
 ```bash
-./bundle/install.sh
+./bundle/ipcam install
 ```
 
-5. Open `http://<host-ip>/` in a browser. Log in with the user and the password from `server:` in `cameras.yaml`.
+5. Open the address that the installer prints. Log in with the user and the password from `server:` in `cameras.yaml`.
 
 The bundle is self-contained. Keep the `bundle/` directory in place after the install, because the
 service runs go2rtc from there.
 
-### Install on another machine
+## The ipcam command
 
-Build the bundle for the target platform, copy the directory, and run the installer there.
+`ipcam install` links the command into `~/.local/bin`. Set `IPCAM_BIN_DIR` to use another directory.
+The command then works from anywhere.
 
-```bash
-node scripts/bundle.mjs --platform linux_arm64 --out bundle-pi
-scp -r bundle-pi pi@192.168.1.20:~/ipcam
-ssh pi@192.168.1.20 '~/ipcam/install.sh'
-```
+| Command | Effect |
+|---------|--------|
+| `ipcam install [--no-link]` | Install the service, start it, and link the command |
+| `ipcam start`, `ipcam stop`, `ipcam restart` | Control the service |
+| `ipcam status` | Show the state, the pid, the URL and the link |
+| `ipcam logs` | Follow the service log |
+| `ipcam url` | Print the address and the viewer user name |
+| `ipcam update [--build]` | Rebuild the config from `cameras.yaml`, then restart |
+| `ipcam uninstall` | Stop the service, remove it, and remove the link |
+| `ipcam version` | Show the bundle and go2rtc versions |
 
-Supported platforms: `mac_arm64`, `mac_amd64`, `linux_amd64`, `linux_arm64`, `linux_arm`,
-`linux_armv6` and `linux_i386`. On Linux the installer needs `sudo`, because it writes a systemd unit.
+`ipcam update` needs the repository and Node.js. It works on the machine that built the bundle.
+On another machine, build a new bundle and copy it again.
 
 ### Change the cameras
 
-Edit `cameras.yaml`, then rebuild the config and restart the service.
+Edit `cameras.yaml`, then apply the change.
 
 ```bash
-node scripts/bundle.mjs --skip-build
-./bundle/install.sh restart
+ipcam update
 ```
+
+## Install on another Mac
+
+The second machine needs no Node.js, no repository and no Homebrew. Copy the bundle and install it.
+
+```bash
+node scripts/bundle.mjs              # on the machine that holds the sources
+scp -r bundle your-mac.local:~/ipcam-viewer
+ssh your-mac.local '~/ipcam-viewer/ipcam install'
+```
+
+AirDrop, a USB disk or a shared folder work as well. The bundle is about 18 MB.
+
+macOS marks a file that arrives through AirDrop or a browser download with a quarantine flag, and
+Gatekeeper then blocks the unsigned go2rtc binary. `ipcam install` removes that flag, so the copy runs.
+
+Both Macs must use the same processor family. Build with `--platform mac_amd64` for an Intel Mac.
+The same flow works for Linux with `--platform linux_arm64`, where the installer needs `sudo` for the
+systemd unit.
+
+Supported platforms: `mac_arm64`, `mac_amd64`, `linux_amd64`, `linux_arm64`, `linux_arm`,
+`linux_armv6` and `linux_i386`.
+
+### One server, many viewers
+
+Each installation opens its own RTSP connection to every camera. Most cameras accept only two or
+three at a time. Run the server on one machine, and open its address from the other devices. Install
+the bundle on a second Mac when you want a spare server, not a second viewer.
 
 ### Bundle options
 
@@ -192,6 +227,8 @@ Tailscale is a good fit. Install Tailscale on the host and on your phone, then o
 MagicDNS name. go2rtc detects the host addresses at run time, so it advertises the Tailscale address
 for WebRTC as soon as Tailscale is connected.
 
+Run `ipcam url` to see the address and the viewer user name of the host.
+
 Set `server.candidates` when you want a fixed list instead, for example on a host with many interfaces.
 Do not use Tailscale Funnel. Funnel publishes the viewer to the open internet.
 
@@ -254,7 +291,8 @@ a different address. Requests from the host skip the password, so the dev server
 | Task | Command |
 |------|---------|
 | Build the bundle | `node scripts/bundle.mjs` |
-| Install, restart, or remove the service | `./bundle/install.sh [install\|restart\|uninstall\|status]` |
+| Install the service | `./bundle/ipcam install` |
+| Control the service | `ipcam [start\|stop\|restart\|status\|logs\|url\|update\|uninstall]` |
 | Generate the configuration only | `node scripts/generate-config.mjs [--target native\|docker]` |
 | Find cameras on the LAN | `node scripts/discover-cameras.mjs [--help]` |
 | Start the dev server | `cd frontend && npm run dev` |
@@ -265,17 +303,17 @@ a different address. Requests from the host skip the password, so the dev server
 ## Troubleshooting
 
 **The browser asks for a password again and again.**
-Check `server.username` and `server.password` in `cameras.yaml`. Rebuild with `--skip-build` and restart.
+Check `server.username` and `server.password` in `cameras.yaml`, then run `ipcam update`.
 
 **The service does not start.**
-On macOS, read `bundle/go2rtc.log`. On Linux, run `journalctl -u ipcam-viewer -f`.
-A common cause is another program on port 80. Change `server.listen`, for example to `:8080`.
+Run `ipcam logs`. A common cause is another program on port 80. A port below 1024 can also need root
+on some systems. Change `server.listen` to a high port, for example `":8080"`, then run `ipcam update`.
 
 **A tile stays on "Connecting" or shows "Offline".**
 Check that the camera answers on its RTSP port. Check the `path` value.
 
 **The browser shows no camera.**
-Run `node scripts/bundle.mjs --skip-build` and restart the service. Read the generator output.
+Run `ipcam update` and read the generator output.
 
 **The tile is black, and the tile shows "Live".**
 The substream path is wrong for that camera. Delete `sub_path` for the camera.
@@ -292,7 +330,7 @@ Tailscale address of the host.
 | `scripts/generate-config.mjs` | It reads `cameras.yaml`. It writes `go2rtc.yaml` and `cameras.json`. |
 | `scripts/bundle.mjs` | It builds the self-contained bundle for a platform. |
 | `scripts/discover-cameras.mjs` | It finds cameras on the LAN with WS-Discovery and a port sweep. |
-| `scripts/native/` | The launchd, systemd and installer templates that go into the bundle. |
+| `scripts/native/` | The `ipcam` command, and the launchd and systemd templates for the bundle. |
 | `bundle/` | The generated bundle. Git ignores this directory. |
 | `nginx/nginx.conf` | The nginx config for the Docker layout. |
 | `docker-compose.yml` | The Docker layout: `config-gen`, `go2rtc` and `web`. |

@@ -1,0 +1,309 @@
+#!/bin/sh
+set -eu
+
+LABEL="io.ipcam-viewer.go2rtc"
+UNIT_NAME="ipcam-viewer"
+BIN_DIR="${IPCAM_BIN_DIR:-$HOME/.local/bin}"
+LINK_PATH="$BIN_DIR/ipcam"
+
+resolve_self() {
+  target=$1
+  case $target in
+    /*) ;;
+    *) target=$(pwd)/$target ;;
+  esac
+  while [ -L "$target" ]; do
+    link=$(readlink "$target")
+    case $link in
+      /*) target=$link ;;
+      *) target=$(cd "$(dirname "$target")" && pwd)/$link ;;
+    esac
+  done
+  printf '%s\n' "$(cd "$(dirname "$target")" && pwd)/$(basename "$target")"
+}
+
+SELF=$(resolve_self "$0")
+BUNDLE_DIR=$(cd "$(dirname "$SELF")" && pwd)
+CONFIG="$BUNDLE_DIR/go2rtc.yaml"
+LOG="$BUNDLE_DIR/go2rtc.log"
+
+case "$(uname -s)" in
+  Darwin) OS=macos ;;
+  Linux) OS=linux ;;
+  *) echo "ipcam: unsupported system $(uname -s)" >&2; exit 1 ;;
+esac
+
+die() { echo "ipcam: $1" >&2; exit 1; }
+
+yaml_value() {
+  sed -n "/^api:/,/^[a-z]/p" "$CONFIG" | sed -n "s/^  $1: *//p" | head -1 | tr -d '"'"'"
+}
+
+listen_address() { yaml_value listen; }
+viewer_user() { v=$(yaml_value username); [ -n "$v" ] && printf '%s\n' "$v" || printf 'viewer\n'; }
+
+listen_port() {
+  address=$(listen_address)
+  port=${address##*:}
+  [ -n "$port" ] && printf '%s\n' "$port" || printf '80\n'
+}
+
+lan_address() {
+  if [ "$OS" = macos ]; then
+    for interface in en0 en1 en2; do
+      address=$(ipconfig getifaddr "$interface" 2>/dev/null) || continue
+      [ -n "$address" ] && { printf '%s\n' "$address"; return; }
+    done
+  else
+    address=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [ -n "$address" ] && { printf '%s\n' "$address"; return; }
+  fi
+  printf 'localhost\n'
+}
+
+base_url() {
+  port=$(listen_port)
+  host=$(lan_address)
+  if [ "$port" = 80 ]; then printf 'http://%s/\n' "$host"; else printf 'http://%s:%s/\n' "$host" "$port"; fi
+}
+
+http_code() {
+  code=$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$(listen_port)/" 2>/dev/null) || true
+  case ${code:-} in
+    "" | 000) printf '000\n' ;;
+    *) printf '%s\n' "$code" ;;
+  esac
+}
+
+allow_unsigned_binary() {
+  [ "$OS" = macos ] || return 0
+  xattr -d com.apple.quarantine "$BUNDLE_DIR/go2rtc" 2>/dev/null || true
+  xattr -d com.apple.quarantine "$SELF" 2>/dev/null || true
+}
+
+require_bundle() {
+  [ -x "$BUNDLE_DIR/go2rtc" ] || die "no go2rtc binary in $BUNDLE_DIR"
+  [ -f "$CONFIG" ] || die "no go2rtc.yaml in $BUNDLE_DIR"
+}
+
+render() {
+  sed -e "s#{{BUNDLE_DIR}}#$BUNDLE_DIR#g" -e "s#{{LABEL}}#$LABEL#g" -e "s#{{USER}}#$(id -un)#g" "$1"
+}
+
+plist_path() { printf '%s\n' "$HOME/Library/LaunchAgents/$LABEL.plist"; }
+domain() { printf 'gui/%s\n' "$(id -u)"; }
+
+start_macos() {
+  [ -f "$(plist_path)" ] || die "the service is not installed. Run: ipcam install"
+  launchctl bootstrap "$(domain)" "$(plist_path)" 2>/dev/null || true
+}
+stop_macos() { launchctl bootout "$(domain)/$LABEL" 2>/dev/null || true; }
+
+install_macos() {
+  mkdir -p "$(dirname "$(plist_path)")"
+  render "$BUNDLE_DIR/service/launchd.plist" > "$(plist_path)"
+  stop_macos
+  launchctl bootstrap "$(domain)" "$(plist_path)"
+}
+
+uninstall_macos() { stop_macos; rm -f "$(plist_path)"; }
+
+state_macos() {
+  info=$(launchctl print "$(domain)/$LABEL" 2>/dev/null) || {
+    if [ -f "$(plist_path)" ]; then printf 'installed, stopped\n'; else printf 'not installed\n'; fi
+    return
+  }
+  state=$(printf '%s\n' "$info" | sed -n 's/^[[:space:]]*state = //p' | head -1)
+  pid=$(printf '%s\n' "$info" | sed -n 's/^[[:space:]]*pid = //p' | head -1)
+  printf '%s%s\n' "${state:-unknown}" "${pid:+ (pid $pid)}"
+}
+
+logs_macos() { [ -f "$LOG" ] || die "no log file at $LOG"; tail -n 50 -f "$LOG"; }
+
+unit_path() { printf '/etc/systemd/system/%s.service\n' "$UNIT_NAME"; }
+start_linux() { sudo systemctl start "$UNIT_NAME"; }
+stop_linux() { sudo systemctl stop "$UNIT_NAME" 2>/dev/null || true; }
+
+install_linux() {
+  render "$BUNDLE_DIR/service/systemd.service" | sudo tee "$(unit_path)" >/dev/null
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now "$UNIT_NAME"
+}
+
+uninstall_linux() {
+  sudo systemctl disable --now "$UNIT_NAME" 2>/dev/null || true
+  sudo rm -f "$(unit_path)"
+  sudo systemctl daemon-reload
+}
+
+state_linux() {
+  systemctl is-active "$UNIT_NAME" 2>/dev/null | head -1 || printf 'not installed\n'
+}
+
+logs_linux() { journalctl -u "$UNIT_NAME" -n 50 -f; }
+
+wait_for_http() {
+  attempt=0
+  while [ "$attempt" -lt 20 ]; do
+    code=$(http_code)
+    case $code in 000) ;; *) printf '%s\n' "$code"; return 0 ;; esac
+    attempt=$((attempt + 1))
+    sleep 0.25
+  done
+  printf '000\n'
+  return 1
+}
+
+report_start_failure() {
+  echo ""
+  echo "The service did not answer on port $(listen_port)." >&2
+  if [ -f "$LOG" ]; then
+    echo "Last log lines:" >&2
+    tail -5 "$LOG" >&2
+  fi
+  echo "" >&2
+  echo "A port below 1024 can need root on some systems." >&2
+  echo "Set a high port in cameras.yaml under server.listen, for example \":8080\"," >&2
+  echo "then run: ipcam update" >&2
+}
+
+do_link() {
+  mkdir -p "$BIN_DIR"
+  ln -sf "$SELF" "$LINK_PATH"
+  echo "Linked $LINK_PATH"
+  case ":$PATH:" in
+    *":$BIN_DIR:"*) ;;
+    *) echo "Note: $BIN_DIR is not in PATH. Add it in your shell profile." ;;
+  esac
+}
+
+do_unlink() {
+  if [ -L "$LINK_PATH" ] && [ "$(resolve_self "$LINK_PATH")" = "$SELF" ]; then
+    rm -f "$LINK_PATH"; echo "Removed $LINK_PATH"
+  else
+    echo "No link of this bundle at $LINK_PATH"
+  fi
+}
+
+build_info() {
+  [ -f "$BUNDLE_DIR/build-info" ] || return 1
+  sed -n "s/^$1=//p" "$BUNDLE_DIR/build-info" | head -1
+}
+
+cmd_install() {
+  link=yes
+  for argument in "$@"; do
+    case $argument in
+      --no-link) link=no ;;
+      *) die "unknown option $argument" ;;
+    esac
+  done
+  require_bundle
+  allow_unsigned_binary
+  "install_$OS"
+  [ "$link" = yes ] && do_link || true
+  if code=$(wait_for_http); then
+    echo "Service running. HTTP $code"
+    cmd_url
+  else
+    report_start_failure
+    exit 1
+  fi
+}
+
+cmd_uninstall() { "uninstall_$OS"; do_unlink; echo "Service removed."; }
+
+cmd_start() {
+  require_bundle; allow_unsigned_binary; "start_$OS"
+  if code=$(wait_for_http); then echo "Service running. HTTP $code"; else report_start_failure; exit 1; fi
+}
+
+cmd_stop() { "stop_$OS"; echo "Service stopped."; }
+
+cmd_restart() {
+  require_bundle; allow_unsigned_binary; "stop_$OS"; "start_$OS"
+  if code=$(wait_for_http); then echo "Service running. HTTP $code"; else report_start_failure; exit 1; fi
+}
+
+cmd_status() {
+  echo "Bundle:  $BUNDLE_DIR"
+  echo "Service: $("state_$OS")"
+  code=$(http_code)
+  case $code in
+    000) echo "HTTP:    no answer on port $(listen_port)" ;;
+    *) echo "HTTP:    $code on port $(listen_port)" ;;
+  esac
+  echo "URL:     $(base_url)"
+  echo "User:    $(viewer_user)"
+  if [ -L "$LINK_PATH" ]; then echo "Command: $LINK_PATH"; else echo "Command: not linked. Run: ipcam link"; fi
+}
+
+cmd_url() { echo "Open $(base_url) and log in as $(viewer_user)"; }
+
+cmd_update() {
+  build=no
+  for argument in "$@"; do
+    case $argument in
+      --build) build=yes ;;
+      *) die "unknown option $argument" ;;
+    esac
+  done
+  repo=$(build_info repo) || die "this bundle records no repository. Rebuild it on the machine that holds the sources."
+  [ -d "$repo" ] || die "the repository $repo is gone. Rebuild the bundle there, then copy it again."
+  command -v node >/dev/null 2>&1 || die "node is not installed. Rebuild the bundle on the machine that holds the sources."
+  if [ "$build" = yes ]; then
+    node "$repo/scripts/bundle.mjs" --out "$BUNDLE_DIR"
+  else
+    node "$repo/scripts/bundle.mjs" --skip-build --out "$BUNDLE_DIR"
+  fi
+  cmd_restart
+}
+
+cmd_version() {
+  echo "bundle:   $BUNDLE_DIR"
+  echo "platform: $(build_info platform || echo unknown)"
+  echo "built:    $(build_info built || echo unknown)"
+  "$BUNDLE_DIR/go2rtc" --version 2>/dev/null || true
+}
+
+cmd_help() {
+  cat <<'EOF'
+Usage: ipcam <command> [options]
+
+  install [--no-link]  Install the service, start it, and link the command into PATH
+  uninstall            Stop the service, remove it, and remove the link
+  start                Start the service
+  stop                 Stop the service
+  restart              Restart the service
+  status               Show the service state, the URL and the link
+  logs                 Follow the service log
+  url                  Print the address and the viewer user name
+  update [--build]     Rebuild the config from cameras.yaml, then restart
+  link                 Link this command into PATH
+  unlink               Remove the link
+  version              Show the bundle and go2rtc versions
+  help                 Show this text
+
+The link goes to ~/.local/bin by default. Set IPCAM_BIN_DIR to change it.
+EOF
+}
+
+command_name=${1:-help}
+[ $# -gt 0 ] && shift || true
+
+case $command_name in
+  install) cmd_install "$@" ;;
+  uninstall) cmd_uninstall ;;
+  start) cmd_start ;;
+  stop) cmd_stop ;;
+  restart) cmd_restart ;;
+  status) cmd_status ;;
+  logs) "logs_$OS" ;;
+  url) cmd_url ;;
+  update) cmd_update "$@" ;;
+  link) do_link ;;
+  unlink) do_unlink ;;
+  version) cmd_version ;;
+  help|-h|--help) cmd_help ;;
+  *) echo "ipcam: unknown command \"$command_name\"" >&2; cmd_help >&2; exit 1 ;;
+esac
