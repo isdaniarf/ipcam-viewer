@@ -40,6 +40,9 @@ jobs:
             cp -R frontend/dist "$stage/www"
             rm -f "$stage/www/cameras.json"
             cp scripts/native/ipcam scripts/native/install.sh "$stage/"
+            mkdir -p "$stage/scripts/lib"
+            cp scripts/discover-cameras.mjs "$stage/scripts/"
+            cp scripts/lib/config-model.mjs "$stage/scripts/lib/"
             cp scripts/native/launchd.plist scripts/native/systemd.service "$stage/service/"
             chmod +x "$stage/ipcam" "$stage/install.sh"
             printf 'platform=%s\ngo2rtc=%s\nbuilt=%s\nversion=%s\n' \

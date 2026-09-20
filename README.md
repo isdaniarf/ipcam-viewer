@@ -35,12 +35,12 @@ these three ways suits the machine.
 | Way | It needs | Choose it when |
 |-----|----------|----------------|
 | [From source](#install-from-source) | Node.js 22 and git | You set up your cameras for the first time, or you change them |
-| [From a release](#install-from-a-release) | `curl` only | You already have a config, and you want the program on one more machine |
+| [From a release](#install-from-a-release) | `curl`, plus Node.js to scan for cameras | You want one command, and you either scan for your cameras or bring a config |
 | [From a bundle](#install-from-a-bundle) | Nothing on the target | The target has no internet, or another processor family |
 
 The config is what separates them. It holds your camera passwords, so it never ships in a release.
-Only the source install writes one, from the `cameras.yaml` that you fill in. Make it once, then move
-it to any other machine with `ipcam config export` and `ipcam config import`.
+You get one in three ways: write `cameras.yaml` yourself, let `ipcam discover` scan your network, or
+copy an existing config with `ipcam config export` and `ipcam config import`.
 
 ### Install from source
 
@@ -94,8 +94,14 @@ curl -fsSL https://raw.githubusercontent.com/isdaniarf/ipcam-viewer/main/install
 It detects the platform, downloads the release and the matching go2rtc binary, installs into
 `~/.local/share/ipcam-viewer`, and links the `ipcam` command.
 
-It brings no config, so give it one. Export the config on a machine that already has it, send the
-file over a private channel, and import it here:
+It brings no config, so give it one. Either scan for your cameras:
+
+```bash
+ONVIF_USER=admin ONVIF_PASSWORD=secret ipcam discover
+ipcam install
+```
+
+Or copy a config from a machine that already has one:
 
 ```bash
 ipcam config export ~/ipcam-config.tgz     # where the config already exists
@@ -103,7 +109,9 @@ ipcam config import ~/ipcam-config.tgz     # on this machine
 ipcam install
 ```
 
-With no config to copy, use the source install above instead. It writes one.
+`ipcam discover` needs Node.js 22. It scans your network, asks each camera over ONVIF for its stream
+paths, and writes the config plus a `cameras.yaml` that you can edit. It prints the viewer login it
+generated. Pass `--force` to replace a config that already exists.
 
 `ipcam upgrade` installs a newer release later and keeps the config.
 
@@ -174,6 +182,7 @@ The command then works from anywhere.
 | `ipcam logs` | Follow the service log |
 | `ipcam url` | Print the address and the viewer user name |
 | `ipcam update [--build]` | Rebuild the config from `cameras.yaml`, then restart |
+| `ipcam discover` | Scan the network and write the config for the cameras it finds |
 | `ipcam config show\|export\|import` | Show, export or import the config |
 | `ipcam upgrade` | Install the newest release, and keep the config |
 | `ipcam uninstall` | Stop the service, remove it, and remove the link |
@@ -309,6 +318,8 @@ Run it on the host, not in Docker. Docker on macOS blocks multicast and hides th
 | `--offline` | Look up no MAC vendor online. |
 | `--json` | Print the result as JSON. |
 | `--write-config <file>` | Write a `cameras.yaml` for the cameras that were found. `-` means stdout. |
+| `--write-runtime <dir>` | Write `go2rtc.yaml` and `cameras.json` straight into a directory. |
+| `--force` | Let `--write-runtime` replace an existing `go2rtc.yaml`. |
 
 ## Remote access
 
@@ -421,6 +432,7 @@ Tailscale address of the host.
 | `scripts/generate-config.mjs` | It reads `cameras.yaml`. It writes `go2rtc.yaml` and `cameras.json`. |
 | `scripts/bundle.mjs` | It builds the self-contained bundle for a platform. |
 | `scripts/discover-cameras.mjs` | It finds cameras on the LAN with WS-Discovery and a port sweep. |
+| `scripts/lib/config-model.mjs` | The shared config logic. No dependency, used by both scripts. |
 | `scripts/native/` | The `ipcam` command, and the launchd and systemd templates for the bundle. |
 | `install.sh` | The `curl \| sh` entry point. It installs a published release. |
 | `.github/workflows/release.yml` | It builds and publishes a release on a `v*` tag. |

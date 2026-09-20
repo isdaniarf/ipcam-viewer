@@ -28,7 +28,8 @@ Multi-camera IP video streaming viewer. React frontend talks to go2rtc for RTSP/
 ├── scripts/
 │   ├── generate-config.mjs     # Reads cameras.yaml → writes go2rtc.yaml + cameras.json
 │   ├── bundle.mjs              # Builds the self-contained native bundle: binary + www + config
-│   ├── discover-cameras.mjs    # WS-Discovery + port sweep; --write-config writes cameras.yaml
+│   ├── discover-cameras.mjs    # WS-Discovery + port sweep; writes cameras.yaml and runtime config
+│   ├── lib/config-model.mjs    # Shared camera->streams/manifest logic; zero imports by design
 │   └── native/                 # ipcam CLI, launchd plist and systemd unit templates
 ├── install.sh                  # curl | sh entry point; installs a published release
 ├── .github/workflows/release.yml  # builds + publishes platform archives on a v* tag
@@ -184,7 +185,12 @@ It accepts a comma-separated list.
   go2rtc, because the vendored library otherwise stays on MSE until a reload. Seen on cold starts.
 - `generate-config.mjs` uses the `yaml` npm package (in `scripts/package.json`)
 - `discover-cameras.mjs` has no npm dependency. It uses `dgram`, `net`, `http` and `https` only.
-  It emits YAML by hand through `yamlScalar`, so keep it dependency free.
+  It emits YAML by hand through `yamlScalar` and `emitYaml`, so keep it dependency free.
+- `scripts/lib/config-model.mjs` holds the camera -> streams/manifest logic. `generate-config.mjs`
+  and `discover-cameras.mjs` both import it, so the two never drift. It must keep zero imports,
+  because the release ships it next to the discovery script without npm.
+- `--write-runtime <dir>` writes `go2rtc.yaml` + `cameras.json` (+ `www/cameras.json`) with no YAML
+  parser, so a release install can configure itself. `ipcam discover` wraps it and needs only Node.
 - `--write-config` takes the RTSP port and path from ONVIF `GetProfiles` plus `GetStreamUri`, on the
   media XAddr from `GetCapabilities` (it falls back to the device service URL, which Tapo accepts).
   The largest H264 profile is `path`, the smallest is `sub_path`. The RTSP probe now speaks Digest and
@@ -199,7 +205,7 @@ It accepts a comma-separated list.
 | Task | Command |
 |------|---------|
 | Build native bundle | `node scripts/bundle.mjs [--platform X] [--skip-build]` |
-| Install / control service | `./bundle/ipcam install`, then `ipcam [start\|stop\|restart\|status\|logs\|update\|uninstall]` |
+| Install / control service | `./bundle/ipcam install`, then `ipcam [start\|stop\|restart\|status\|logs\|discover\|update\|uninstall]` |
 | Dev server | `cd frontend && npm run dev` |
 | Build frontend | `cd frontend && npm run build` |
 | Lint | `cd frontend && npm run lint` |

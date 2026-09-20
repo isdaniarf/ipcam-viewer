@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createSocket } from "node:dgram";
 import { request as httpRequest } from "node:http";
@@ -7,6 +8,11 @@ import { request as httpsRequest } from "node:https";
 import { connect } from "node:net";
 import { networkInterfaces } from "node:os";
 import { parseArgs, promisify } from "node:util";
+import {
+  buildCameras,
+  buildGo2rtcConfig,
+  manifestJson,
+} from "./lib/config-model.mjs";
 
 const exec = promisify(execFile);
 
@@ -88,6 +94,10 @@ Options:
   --write-config <file>
                        Write a cameras.yaml for the cameras that were found.
                        Use "-" for stdout. It never overwrites an existing file.
+  --write-runtime <dir>
+                       Write go2rtc.yaml and cameras.json straight into <dir>.
+                       This needs no cameras.yaml and no YAML parser.
+  --force              Allow --write-runtime to replace an existing go2rtc.yaml.
   --help               Show this text.
 
 Environment:
@@ -118,6 +128,8 @@ function readOptions() {
         offline: { type: "boolean" },
         json: { type: "boolean" },
         "write-config": { type: "string" },
+        "write-runtime": { type: "string" },
+        force: { type: "boolean" },
         help: { type: "boolean" },
       },
     });
@@ -164,6 +176,8 @@ function readOptions() {
     offline: values.offline === true,
     json: values.json === true,
     writeConfig: values["write-config"] ?? null,
+    writeRuntime: values["write-runtime"] ?? null,
+    force: values.force === true,
     credentials: user ? { user, password } : null,
   };
 }
@@ -1069,19 +1083,11 @@ function rtspPlanFor(host) {
   return null;
 }
 
-function buildCameraConfig(cameras, credentials) {
+function planCameras(cameras, credentials) {
   const used = new Set();
-  const lines = [];
   const notes = [];
+  const entries = [];
 
-  lines.push("server:");
-  lines.push(`  listen: ${yamlScalar(":80")}`);
-  lines.push(`  username: ${yamlScalar("viewer")}`);
-  lines.push(`  password: ${yamlScalar(randomBytes(12).toString("base64url"))}`);
-  lines.push("");
-  lines.push("cameras:");
-
-  let written = 0;
   for (const host of cameras) {
     const plan = rtspPlanFor(host);
     const onvifPort = onvifPortOf(host);
@@ -1092,38 +1098,107 @@ function buildCameraConfig(cameras, credentials) {
 
     const name = cameraName(host, used);
     const label = userSetName(host);
-    lines.push(`  - name: ${yamlScalar(name)}`);
-    if (label && slug(label) !== name) lines.push(`    label: ${yamlScalar(label)}`);
-    lines.push(`    host: ${yamlScalar(host.ip)}`);
-    lines.push(`    username: ${yamlScalar(credentials ? credentials.user : "your_camera_account")}`);
-    lines.push(`    password: ${yamlScalar(credentials ? credentials.password : "your_camera_password")}`);
+    const entry = {
+      name,
+      host: host.ip,
+      username: credentials ? credentials.user : "your_camera_account",
+      password: credentials ? credentials.password : "your_camera_password",
+    };
+    if (label && slug(label) !== name) entry.label = label;
 
     if (plan && plan.path) {
-      lines.push("    rtsp:");
-      lines.push(`      port: ${plan.port}`);
-      lines.push(`      path: ${yamlScalar(plan.path)}`);
-      if (plan.subPath) lines.push(`      sub_path: ${yamlScalar(plan.subPath)}`);
-      if (!plan.subPath) notes.push(`${host.ip} (${name}): found one stream only. No sub_path.`);
+      entry.rtsp = { port: plan.port, path: plan.path };
+      if (plan.subPath) entry.rtsp.sub_path = plan.subPath;
+      else notes.push(`${host.ip} (${name}): found one stream only. No sub_path.`);
     } else if (plan) {
       notes.push(
         `${host.ip} (${name}): RTSP answers on port ${plan.port}, but the path stayed unknown. ` +
           "Add an rtsp: block with the path yourself.",
       );
     }
-
-    if (onvifPort !== null) {
-      lines.push("    onvif:");
-      lines.push(`      port: ${onvifPort}`);
-    }
-    lines.push("");
-    written += 1;
+    if (onvifPort !== null) entry.onvif = { port: onvifPort };
+    entries.push(entry);
   }
 
   if (!credentials) {
     notes.push("Set ONVIF_USER and ONVIF_PASSWORD to fill in the camera account, or edit the file.");
   }
   notes.push("Tapo needs the TP-Link cloud password. Add a tapo: block yourself when you want it.");
-  return { text: `${lines.join("\n").trimEnd()}\n`, written, notes };
+
+  const server = {
+    listen: ":80",
+    username: "viewer",
+    password: randomBytes(12).toString("base64url"),
+  };
+  return { entries, server, notes };
+}
+
+function emitYaml(value, indent = 0) {
+  const pad = " ".repeat(indent);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    return `\n${value.map((item) => `${pad}- ${String(emitYaml(item, indent + 2)).trim()}`).join("\n")}`;
+  }
+  if (value && typeof value === "object") {
+    const lines = [];
+    for (const [key, item] of Object.entries(value)) {
+      if (item === undefined) continue;
+      const rendered = emitYaml(item, indent + 2);
+      const joiner = typeof rendered === "string" && rendered.startsWith("\n") ? "" : " ";
+      lines.push(`${pad}${key}:${joiner}${rendered}`);
+    }
+    return `\n${lines.join("\n")}`;
+  }
+  return yamlScalar(value);
+}
+
+function cameraConfigText(plan) {
+  const lines = ["server:"];
+  lines.push(`  listen: ${yamlScalar(plan.server.listen)}`);
+  lines.push(`  username: ${yamlScalar(plan.server.username)}`);
+  lines.push(`  password: ${yamlScalar(plan.server.password)}`);
+  lines.push("");
+  lines.push("cameras:");
+  for (const entry of plan.entries) {
+    lines.push(`  - name: ${yamlScalar(entry.name)}`);
+    if (entry.label) lines.push(`    label: ${yamlScalar(entry.label)}`);
+    lines.push(`    host: ${yamlScalar(entry.host)}`);
+    lines.push(`    username: ${yamlScalar(entry.username)}`);
+    lines.push(`    password: ${yamlScalar(entry.password)}`);
+    if (entry.rtsp) {
+      lines.push("    rtsp:");
+      lines.push(`      port: ${entry.rtsp.port}`);
+      lines.push(`      path: ${yamlScalar(entry.rtsp.path)}`);
+      if (entry.rtsp.sub_path) lines.push(`      sub_path: ${yamlScalar(entry.rtsp.sub_path)}`);
+    }
+    if (entry.onvif) {
+      lines.push("    onvif:");
+      lines.push(`      port: ${entry.onvif.port}`);
+    }
+    lines.push("");
+  }
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+function writeRuntime(directory, plan) {
+  const errors = [];
+  const warnings = [];
+  const { streams, manifest } = buildCameras(plan.entries, errors, warnings);
+  if (errors.length > 0) return { errors, warnings, written: 0 };
+
+  const api = {
+    listen: plan.server.listen,
+    static_dir: "www",
+    username: plan.server.username,
+    password: plan.server.password,
+  };
+  const config = buildGo2rtcConfig({ streams, api, candidates: [] });
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "go2rtc.yaml"), `${String(emitYaml(config)).replace(/^\n/, "")}\n`);
+  const json = manifestJson(manifest);
+  writeFileSync(join(directory, "cameras.json"), json);
+  if (existsSync(join(directory, "www"))) writeFileSync(join(directory, "www", "cameras.json"), json);
+  return { errors, warnings, written: manifest.length, streams: Object.keys(streams).length };
 }
 
 function renderHost(host) {
@@ -1201,6 +1276,12 @@ async function main() {
     fail("--skip-discovery and --skip-sweep leave nothing to scan.");
   if (options.writeConfig && options.writeConfig !== "-" && existsSync(options.writeConfig))
     fail(`${options.writeConfig} already exists. Move it, or choose another path.`);
+  if (
+    options.writeRuntime &&
+    !options.force &&
+    existsSync(`${options.writeRuntime}/go2rtc.yaml`)
+  )
+    fail(`${options.writeRuntime}/go2rtc.yaml already exists. Pass --force to replace it.`);
   if (!options.skipSweep && subnets.length === 0) fail("Found no local subnet to sweep. Pass --subnet.");
 
   let discovered = new Map();
@@ -1282,19 +1363,42 @@ async function main() {
   const cameras = hosts.filter((host) => host.likelyCamera);
   const others = hosts.filter((host) => !host.likelyCamera);
 
-  if (options.writeConfig) {
-    const config = buildCameraConfig(cameras, options.credentials);
-    if (options.writeConfig === "-") {
-      process.stdout.write(config.text);
-    } else {
-      writeFileSync(options.writeConfig, config.text);
-      log(`Wrote ${options.writeConfig} with ${config.written} camera(s).`);
+  if (options.writeConfig || options.writeRuntime) {
+    const plan = planCameras(cameras, options.credentials);
+    const usable = plan.entries.filter((entry) => entry.rtsp || entry.onvif);
+
+    if (options.writeConfig) {
+      const text = cameraConfigText(plan);
+      if (options.writeConfig === "-") {
+        process.stdout.write(text);
+      } else {
+        writeFileSync(options.writeConfig, text);
+        log(`Wrote ${options.writeConfig} with ${plan.entries.length} camera(s).`);
+      }
     }
-    for (const note of config.notes) log(`note: ${note}`);
-    if (options.writeConfig !== "-" && options.credentials) {
-      log("The file holds the camera account. Keep it out of version control.");
+
+    if (options.writeRuntime) {
+      if (usable.length === 0) {
+        log("error: found no camera with a usable stream. Wrote no runtime config.");
+      } else {
+        const result = writeRuntime(options.writeRuntime, { ...plan, entries: usable });
+        if (result.errors.length > 0) {
+          for (const problem of result.errors) log(`error: ${problem}`);
+        } else {
+          log(
+            `Wrote ${options.writeRuntime}/go2rtc.yaml and cameras.json ` +
+              `with ${result.written} camera(s) and ${result.streams} stream(s).`,
+          );
+          log(`Viewer login: ${plan.server.username} / ${plan.server.password}`);
+        }
+      }
     }
-    if (options.writeConfig === "-") return;
+
+    for (const note of plan.notes) log(`note: ${note}`);
+    if (options.credentials && (options.writeRuntime || options.writeConfig !== "-")) {
+      log("The written files hold the camera account. Keep them out of version control.");
+    }
+    if (options.writeConfig === "-" && !options.writeRuntime) return;
   }
 
   if (options.json) {

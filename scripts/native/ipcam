@@ -324,6 +324,26 @@ cmd_config() {
   esac
 }
 
+cmd_discover() {
+  command -v node >/dev/null 2>&1 || die "node is not installed. Discovery needs Node.js 22."
+  script="$BUNDLE_DIR/scripts/discover-cameras.mjs"
+  [ -f "$script" ] || die "this bundle ships no discovery script. Install a newer release."
+
+  if [ -f "$BUNDLE_DIR/cameras.yaml" ]; then
+    node "$script" --write-runtime "$BUNDLE_DIR" "$@" || die "the scan failed"
+  else
+    node "$script" --write-runtime "$BUNDLE_DIR" --write-config "$BUNDLE_DIR/cameras.yaml" "$@" \
+      || die "the scan failed"
+  fi
+
+  [ -f "$CONFIG" ] || die "the scan wrote no config"
+  if service_is_this_bundle; then
+    "$SELF" restart
+  else
+    echo "Next: ipcam install"
+  fi
+}
+
 cmd_upgrade() {
   command -v curl >/dev/null 2>&1 || die "curl is not installed"
   url="https://raw.githubusercontent.com/isdaniarf/ipcam-viewer/main/install.sh"
@@ -351,6 +371,7 @@ Usage: ipcam <command> [options]
   logs                 Follow the service log
   url                  Print the address and the viewer user name
   update [--build]     Rebuild the config from cameras.yaml, then restart
+  discover [options]   Scan the network and write the config for the cameras it finds
   config <action>      show, export <file.tgz>, or import <file.tgz|yaml|url>
   upgrade              Install the newest release, and keep the config
   link                 Link this command into PATH
@@ -375,6 +396,7 @@ case $command_name in
   logs) "logs_$OS" ;;
   url) cmd_url ;;
   update) cmd_update "$@" ;;
+  discover) cmd_discover "$@" ;;
   config) cmd_config "$@" ;;
   upgrade) cmd_upgrade ;;
   link) do_link ;;

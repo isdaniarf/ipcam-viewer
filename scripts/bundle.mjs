@@ -162,6 +162,14 @@ async function main() {
     copyFileSync(resolve(native, name), resolve(outDir, name));
     chmodSync(resolve(outDir, name), 0o755);
   }
+
+  const scriptsDir = resolve(outDir, "scripts");
+  mkdirSync(resolve(scriptsDir, "lib"), { recursive: true });
+  copyFileSync(resolve(root, "scripts", "discover-cameras.mjs"), resolve(scriptsDir, "discover-cameras.mjs"));
+  copyFileSync(
+    resolve(root, "scripts", "lib", "config-model.mjs"),
+    resolve(scriptsDir, "lib", "config-model.mjs"),
+  );
   writeFileSync(
     resolve(outDir, "build-info"),
     [`repo=${root}`, `platform=${platform}`, `go2rtc=${version}`, `built=${new Date().toISOString()}`, ""].join("\n"),
