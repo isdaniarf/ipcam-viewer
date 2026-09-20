@@ -324,8 +324,177 @@ cmd_config() {
   esac
 }
 
-cmd_discover() {
-  command -v node >/dev/null 2>&1 || die "node is not installed. Discovery needs Node.js 22."
+urlencode() {
+  string=$1
+  out=""
+  while [ -n "$string" ]; do
+    char=${string%"${string#?}"}
+    case $char in
+      [a-zA-Z0-9.~_-]) out="$out$char" ;;
+      *) out="$out$(printf '%%%02X' "'$char")" ;;
+    esac
+    string=${string#?}
+  done
+  printf '%s' "$out"
+}
+
+slugify() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g; s/^_+//; s/_+$//' | cut -c1-40
+}
+
+json_field() {
+  printf '%s' "$2" | sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p"
+}
+
+json_objects() {
+  printf '%s' "$1" | sed 's/},{/}\
+{/g' | sed 's/^{"sources":\[//; s/\]}$//'
+}
+
+random_secret() {
+  od -An -tx1 -N12 /dev/urandom | tr -d ' \n'
+}
+
+yaml_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"
+}
+
+existing_api_value() {
+  [ -f "$CONFIG" ] || return 1
+  value=$(yaml_value "$1")
+  [ -n "$value" ] || return 1
+  printf '%s' "$value"
+}
+
+discover_with_go2rtc() {
+  force=$1
+  command -v curl >/dev/null 2>&1 || die "curl is not installed"
+  [ -x "$BUNDLE_DIR/go2rtc" ] || die "no go2rtc binary in $BUNDLE_DIR"
+  [ -n "${ONVIF_USER:-}" ] && [ -n "${ONVIF_PASSWORD:-}" ] ||
+    die "set ONVIF_USER and ONVIF_PASSWORD to the camera account, then run this again"
+  if [ -f "$CONFIG" ] && [ "$force" != yes ]; then
+    die "$CONFIG already exists. Pass --force to replace it."
+  fi
+
+  scratch=$(mktemp -d)
+  port=$((19000 + $$ % 900))
+  printf 'api:\n  listen: 127.0.0.1:%s\nrtsp:\n  listen: ""\nwebrtc:\n  listen: ""\n' "$port" \
+    > "$scratch/probe.yaml"
+  ( cd "$scratch" && "$BUNDLE_DIR/go2rtc" -config "$scratch/probe.yaml" > "$scratch/probe.log" 2>&1 & )
+
+  ready=no
+  attempt=0
+  while [ "$attempt" -lt 30 ]; do
+    if curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$port/api" 2>/dev/null; then ready=yes; break; fi
+    attempt=$((attempt + 1))
+    sleep 0.2
+  done
+  if [ "$ready" != yes ]; then
+    pkill -f "go2rtc -config $scratch/probe.yaml" 2>/dev/null || true
+    rm -rf "$scratch"
+    die "could not start go2rtc for the scan"
+  fi
+
+  echo "Scanning the network for ONVIF cameras..."
+  : > "$scratch/devices"
+  for pass in 1 2; do
+    json=$(curl -fsS -m 20 "http://127.0.0.1:$port/api/onvif" 2>/dev/null) || json=""
+    [ -n "$json" ] || continue
+    json_objects "$json" | while IFS= read -r object; do
+      [ -n "$object" ] || continue
+      device=$(json_field name "$object")
+      info=$(json_field info "$object")
+      [ -n "$device" ] && printf '%s|%s\n' "$device" "$info" >> "$scratch/devices"
+    done
+  done
+  sort -u "$scratch/devices" -o "$scratch/devices"
+
+  user=$(urlencode "$ONVIF_USER")
+  password=$(urlencode "$ONVIF_PASSWORD")
+  : > "$scratch/streams"
+  : > "$scratch/manifest"
+  : > "$scratch/names"
+  found=0
+
+  while IFS='|' read -r device info; do
+    [ -n "$device" ] || continue
+    source_url="onvif://$user:$password@$device"
+    profiles=$(curl -fsS -m 25 -G "http://127.0.0.1:$port/api/onvif" \
+      --data-urlencode "src=$source_url" 2>/dev/null) || profiles=""
+    urls=$(printf '%s' "$profiles" | grep -o '"url":"[^"]*"' | sed 's/"url":"//; s/"$//')
+    main=$(printf '%s\n' "$urls" | sed -n 1p)
+    sub=$(printf '%s\n' "$urls" | sed -n 2p)
+    if [ -z "$main" ]; then
+      echo "  ${device%%:*}: no stream profile. It may reject the account." >&2
+      continue
+    fi
+
+    label=$(printf '%s' "$info" | awk '{for (i = 1; i <= NF; i++) if (!seen[$i]++) printf "%s%s", (i > 1 && out ? " " : ""), $i, out = 1}')
+    [ -n "$label" ] || label=${device%%:*}
+    base=$(slugify "$(printf '%s' "$label" | awk '{print $1}')")
+    [ -n "$base" ] || base=$(slugify "cam_${device%%:*}")
+    name=$base
+    suffix=$(printf '%s' "${device%%:*}" | awk -F. '{print $4}')
+    if grep -qx "$name" "$scratch/names" 2>/dev/null; then name="${base}_${suffix}"; fi
+    counter=2
+    while grep -qx "$name" "$scratch/names" 2>/dev/null; do
+      name="${base}_${suffix}_$counter"
+      counter=$((counter + 1))
+    done
+    printf '%s\n' "$name" >> "$scratch/names"
+
+    printf '  %s.onvif: %s\n' "$name" "$(yaml_quote "$main")" >> "$scratch/streams"
+    entry="    {\"name\": \"$name\", \"label\": \"$label\", \"streams\": {\"onvif\": {\"main\": \"$name.onvif\""
+    if [ -n "$sub" ]; then
+      printf '  %s.onvif.sub: %s\n' "$name" "$(yaml_quote "$sub")" >> "$scratch/streams"
+      entry="$entry, \"sub\": \"$name.onvif.sub\""
+    fi
+    entry="$entry}}}"
+    printf '%s\n' "$entry" >> "$scratch/manifest"
+    echo "  ${device%%:*}  $name  $(printf '%s\n' "$urls" | grep -c .) profile(s)"
+    found=$((found + 1))
+  done < "$scratch/devices"
+
+  pkill -f "go2rtc -config $scratch/probe.yaml" 2>/dev/null || true
+
+  if [ "$found" -eq 0 ]; then
+    rm -rf "$scratch"
+    die "found no ONVIF camera. Try: ipcam discover --deep"
+  fi
+
+  listen=$(existing_api_value listen || printf ':80')
+  viewer=$(existing_api_value username || printf 'viewer')
+  secret=$(existing_api_value password || random_secret)
+
+  {
+    echo "streams:"
+    cat "$scratch/streams"
+    echo "api:"
+    echo "  listen: $(yaml_quote "$listen")"
+    echo "  static_dir: www"
+    echo "  username: $(yaml_quote "$viewer")"
+    echo "  password: $(yaml_quote "$secret")"
+    echo "webrtc:"
+    echo "  listen: ':8555'"
+    echo "  ice_servers: []"
+  } > "$BUNDLE_DIR/go2rtc.yaml"
+
+  {
+    echo "{"
+    echo '  "cameras": ['
+    sed '$!s/$/,/' "$scratch/manifest"
+    echo "  ]"
+    echo "}"
+  } > "$BUNDLE_DIR/cameras.json"
+  [ -d "$BUNDLE_DIR/www" ] && cp "$BUNDLE_DIR/cameras.json" "$BUNDLE_DIR/www/cameras.json"
+
+  rm -rf "$scratch"
+  echo "Wrote $BUNDLE_DIR/go2rtc.yaml with $found camera(s)."
+  echo "Viewer login: $viewer / $secret"
+}
+
+discover_with_node() {
+  command -v node >/dev/null 2>&1 || die "node is not installed. Drop --deep to scan with go2rtc."
   script="$BUNDLE_DIR/scripts/discover-cameras.mjs"
   [ -f "$script" ] || die "this bundle ships no discovery script. Install a newer release."
 
@@ -334,6 +503,31 @@ cmd_discover() {
   else
     node "$script" --write-runtime "$BUNDLE_DIR" --write-config "$BUNDLE_DIR/cameras.yaml" "$@" \
       || die "the scan failed"
+  fi
+}
+
+cmd_discover() {
+  deep=no
+  force=no
+  for argument in "$@"; do
+    case $argument in
+      --deep) deep=yes ;;
+      --force) force=yes ;;
+      *) ;;
+    esac
+  done
+
+  if [ "$deep" = yes ]; then
+    set -- "$@"
+    rest=""
+    for argument in "$@"; do
+      [ "$argument" = "--deep" ] && continue
+      rest="$rest $argument"
+    done
+    # shellcheck disable=SC2086
+    discover_with_node $rest
+  else
+    discover_with_go2rtc "$force"
   fi
 
   [ -f "$CONFIG" ] || die "the scan wrote no config"
@@ -371,7 +565,10 @@ Usage: ipcam <command> [options]
   logs                 Follow the service log
   url                  Print the address and the viewer user name
   update [--build]     Rebuild the config from cameras.yaml, then restart
-  discover [options]   Scan the network and write the config for the cameras it finds
+  discover [--deep]    Scan for ONVIF cameras with go2rtc and write the config.
+                       --deep uses the bundled scanner instead. It needs Node.js,
+                       and it also finds cameras that speak no ONVIF.
+                       Set ONVIF_USER and ONVIF_PASSWORD first.
   config <action>      show, export <file.tgz>, or import <file.tgz|yaml|url>
   upgrade              Install the newest release, and keep the config
   link                 Link this command into PATH

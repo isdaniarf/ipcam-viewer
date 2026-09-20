@@ -190,7 +190,12 @@ It accepts a comma-separated list.
   and `discover-cameras.mjs` both import it, so the two never drift. It must keep zero imports,
   because the release ships it next to the discovery script without npm.
 - `--write-runtime <dir>` writes `go2rtc.yaml` + `cameras.json` (+ `www/cameras.json`) with no YAML
-  parser, so a release install can configure itself. `ipcam discover` wraps it and needs only Node.
+  parser, so a release install can configure itself. `ipcam discover --deep` wraps it.
+- `ipcam discover` (no flag) needs no Node at all. It starts the bundled go2rtc on a loopback port and
+  uses go2rtc's own `GET /api/onvif`: with no `src` it runs WS-Discovery, with `src=onvif://user:pass@host:port`
+  it lists the profiles as `onvif://...?subtype=profile_N` source URLs, which are usable streams
+  (verified: profile_1 2560x1440, profile_2 640x360). Discovery is UDP, so it probes twice and merges.
+  Shell-only helpers do the URL encoding, slugs, JSON field extraction and YAML quoting.
 - `--write-config` takes the RTSP port and path from ONVIF `GetProfiles` plus `GetStreamUri`, on the
   media XAddr from `GetCapabilities` (it falls back to the device service URL, which Tapo accepts).
   The largest H264 profile is `path`, the smallest is `sub_path`. The RTSP probe now speaks Digest and

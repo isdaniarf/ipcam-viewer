@@ -23,6 +23,7 @@ It plays each stream with WebRTC. It falls back to MSE, and then to HLS.
 - macOS or Linux, on the machine that runs the viewer.
 - Node.js 22 and git, for the source install. The other two ways need neither.
 - Cameras that speak RTSP, ONVIF or Tapo, on the same network.
+- An ONVIF camera account, when you let `ipcam discover` find the cameras for you.
 
 The service runs as a launchd agent on macOS, or as a systemd unit on Linux. The installer adds an
 `ipcam` command to your PATH.
@@ -35,7 +36,7 @@ these three ways suits the machine.
 | Way | It needs | Choose it when |
 |-----|----------|----------------|
 | [From source](#install-from-source) | Node.js 22 and git | You set up your cameras for the first time, or you change them |
-| [From a release](#install-from-a-release) | `curl`, plus Node.js to scan for cameras | You want one command, and you either scan for your cameras or bring a config |
+| [From a release](#install-from-a-release) | `curl` only | You want one command. It can scan for your cameras by itself |
 | [From a bundle](#install-from-a-bundle) | Nothing on the target | The target has no internet, or another processor family |
 
 The config is what separates them. It holds your camera passwords, so it never ships in a release.
@@ -109,9 +110,14 @@ ipcam config import ~/ipcam-config.tgz     # on this machine
 ipcam install
 ```
 
-`ipcam discover` needs Node.js 22. It scans your network, asks each camera over ONVIF for its stream
-paths, and writes the config plus a `cameras.yaml` that you can edit. It prints the viewer login it
+`ipcam discover` needs nothing but the bundle. It starts go2rtc on a loopback port, asks it to find
+ONVIF cameras, reads each camera's stream profiles, and writes the config. It uses the largest profile
+for the grid tile and the second one as the low resolution stream. It prints the viewer login it
 generated. Pass `--force` to replace a config that already exists.
+
+Add `--deep` for a slower scan with the bundled scanner. It needs Node.js 22, and it also finds
+cameras that speak no ONVIF, reports the vendor and the open ports, and writes a `cameras.yaml` that
+you can edit.
 
 `ipcam upgrade` installs a newer release later and keeps the config.
 
@@ -182,7 +188,7 @@ The command then works from anywhere.
 | `ipcam logs` | Follow the service log |
 | `ipcam url` | Print the address and the viewer user name |
 | `ipcam update [--build]` | Rebuild the config from `cameras.yaml`, then restart |
-| `ipcam discover` | Scan the network and write the config for the cameras it finds |
+| `ipcam discover [--deep]` | Scan the network and write the config for the cameras it finds |
 | `ipcam config show\|export\|import` | Show, export or import the config |
 | `ipcam upgrade` | Install the newest release, and keep the config |
 | `ipcam uninstall` | Stop the service, remove it, and remove the link |
