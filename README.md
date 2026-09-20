@@ -21,21 +21,30 @@ It plays each stream with WebRTC. It falls back to MSE, and then to HLS.
 ## Requirements
 
 - macOS or Linux, on the machine that runs the viewer.
-- Node.js 22, for the first install. It writes your camera config and builds the page.
+- Node.js 22 and git, for the source install. The other two ways need neither.
 - Cameras that speak RTSP, ONVIF or Tapo, on the same network.
 
 The service runs as a launchd agent on macOS, or as a systemd unit on Linux. The installer adds an
-`ipcam` command to your PATH. Later machines need no Node.js.
+`ipcam` command to your PATH.
 
 ## Install
 
-The viewer needs two things: the program, and a config that lists your cameras.
+The viewer is one program plus a config that lists your cameras. Install the program in whichever of
+these three ways suits the machine.
 
-You write the config once, in `cameras.yaml`. A script turns it into the file that the program reads.
-That file holds your camera passwords, so it never ships in a release, and you keep it on your own
-machines.
+| Way | It needs | Choose it when |
+|-----|----------|----------------|
+| [From source](#install-from-source) | Node.js 22 and git | You set up your cameras for the first time, or you change them |
+| [From a release](#install-from-a-release) | `curl` only | You already have a config, and you want the program on one more machine |
+| [From a bundle](#install-from-a-bundle) | Nothing on the target | The target has no internet, or another processor family |
 
-### Set up the first machine
+The config is what separates them. It holds your camera passwords, so it never ships in a release.
+Only the source install writes one, from the `cameras.yaml` that you fill in. Make it once, then move
+it to any other machine with `ipcam config export` and `ipcam config import`.
+
+### Install from source
+
+This writes your config and builds the page. Do this at least once.
 
 1. Clone this repository.
 
@@ -74,9 +83,9 @@ node scripts/bundle.mjs
 The bundle is self-contained. Keep the `bundle/` directory in place after the install, because the
 service runs go2rtc from there.
 
-### Add more machines
+### Install from a release
 
-A machine that only runs the viewer needs no clone and no Node.js. One command installs the program:
+This needs no clone and no Node.js. One command installs the program:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/isdaniarf/ipcam-viewer/main/install.sh | sh
@@ -85,14 +94,16 @@ curl -fsSL https://raw.githubusercontent.com/isdaniarf/ipcam-viewer/main/install
 It detects the platform, downloads the release and the matching go2rtc binary, installs into
 `~/.local/share/ipcam-viewer`, and links the `ipcam` command.
 
-Then give it the config that you made on the first machine. Export it there, send the file over a
-private channel, and import it here:
+It brings no config, so give it one. Export the config on a machine that already has it, send the
+file over a private channel, and import it here:
 
 ```bash
-ipcam config export ~/ipcam-config.tgz     # on the first machine
-ipcam config import ~/ipcam-config.tgz     # on the new machine
+ipcam config export ~/ipcam-config.tgz     # where the config already exists
+ipcam config import ~/ipcam-config.tgz     # on this machine
 ipcam install
 ```
+
+With no config to copy, use the source install above instead. It writes one.
 
 `ipcam upgrade` installs a newer release later and keeps the config.
 
@@ -107,10 +118,10 @@ ipcam install
 Read the script before you pipe it into a shell. Pin a tag with `IPCAM_VERSION` when you want a
 reproducible install.
 
-### Copy a bundle instead
+### Install from a bundle
 
-You can also skip the release and copy a complete bundle, config included. Build it for the target
-platform, then copy the directory.
+A bundle is a complete directory: the program, the page, the go2rtc binary and the config. Build it
+for the target platform on a machine that has the sources, then copy the directory over.
 
 ```bash
 node scripts/bundle.mjs --platform linux_arm64 --out bundle-pi
@@ -124,9 +135,8 @@ the go2rtc binary. It also carries your camera passwords, so treat it as a secre
 macOS marks a file that arrives through AirDrop or a browser download with a quarantine flag, and
 Gatekeeper then blocks the unsigned go2rtc binary. `ipcam install` removes that flag, so the copy runs.
 
-Both Macs must use the same processor family. Build with `--platform mac_amd64` for an Intel Mac.
-The same flow works for Linux with `--platform linux_arm64`, where the installer needs `sudo` for the
-systemd unit.
+Build for the processor family of the target, not of the machine you build on. Use
+`--platform mac_amd64` for an Intel Mac. On Linux the installer needs `sudo` for the systemd unit.
 
 Supported platforms: `mac_arm64`, `mac_amd64`, `linux_amd64`, `linux_arm64`, `linux_arm`,
 `linux_armv6` and `linux_i386`.
