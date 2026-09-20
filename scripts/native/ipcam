@@ -271,6 +271,32 @@ service_is_this_bundle() {
   fi
 }
 
+convert_cameras_yaml() {
+  source_file=$1
+  shown=$2
+  repo=$(build_info repo) || repo=""
+  generator=""
+  [ -n "$repo" ] && [ -f "$repo/scripts/generate-config.mjs" ] && generator="$repo/scripts/generate-config.mjs"
+
+  if [ -z "$generator" ] || ! command -v node >/dev/null 2>&1; then
+    echo "ipcam: $shown is in the source format that you edit by hand." >&2
+    echo "This bundle cannot turn it into a runtime config on its own." >&2
+    echo "" >&2
+    echo "Choose one:" >&2
+    echo "  ipcam discover                       scan the network instead" >&2
+    echo "  ipcam config import <file.tgz>       import a config exported elsewhere" >&2
+    echo "" >&2
+    echo "Or convert it where the sources live, then copy the result:" >&2
+    echo "  node scripts/generate-config.mjs --cameras $shown --out <dir> --static-dir www" >&2
+    exit 1
+  fi
+
+  node "$generator" --target native --cameras "$source_file" --out "$BUNDLE_DIR" --static-dir www \
+    || die "could not turn $shown into a runtime config"
+  [ -f "$CONFIG" ] || die "the conversion wrote no go2rtc.yaml"
+  cp "$source_file" "$BUNDLE_DIR/cameras.yaml"
+}
+
 cmd_config() {
   action=${1:-show}
   [ $# -gt 0 ] && shift || true
@@ -285,26 +311,41 @@ cmd_config() {
       ;;
     import|"")
       source=${1:-}
-      [ -n "$source" ] || die "usage: ipcam config import <file.tgz|go2rtc.yaml|url>"
+      [ -n "$source" ] || die "usage: ipcam config import <file.tgz|cameras.yaml|go2rtc.yaml|url>"
       scratch=$(mktemp -d)
+      original=$source
       case $source in
         http://*|https://*)
-          curl -fsSL "$source" -o "$scratch/download" || die "could not download $source"
+          curl -fsSL "$source" -o "$scratch/download" || { rm -rf "$scratch"; die "could not download $source"; }
           source=$scratch/download
           ;;
-        *) [ -f "$source" ] || die "no such file: $source" ;;
+        *) [ -f "$source" ] || { rm -rf "$scratch"; die "no such file: $source"; } ;;
       esac
+
+      runtime=""
       if tar -tzf "$source" >/dev/null 2>&1; then
         tar -xzf "$source" -C "$scratch"
+        [ -f "$scratch/go2rtc.yaml" ] || { rm -rf "$scratch"; die "$original holds no go2rtc.yaml"; }
+        runtime=$scratch/go2rtc.yaml
+      elif grep -q "^api:" "$source" 2>/dev/null; then
+        runtime=$source
+      elif grep -q "^cameras:" "$source" 2>/dev/null; then
+        convert_cameras_yaml "$source" "$original" "$scratch"
+        rm -rf "$scratch"
+        echo "Config installed in $BUNDLE_DIR"
+        if service_is_this_bundle; then "$SELF" restart; else echo "Next: ipcam install"; fi
+        return 0
       else
-        cp "$source" "$scratch/go2rtc.yaml"
+        rm -rf "$scratch"
+        die "$original is neither a config archive, a go2rtc.yaml, nor a cameras.yaml"
       fi
-      [ -f "$scratch/go2rtc.yaml" ] || { rm -rf "$scratch"; die "the config holds no go2rtc.yaml"; }
-      grep -q "^api:" "$scratch/go2rtc.yaml" || { rm -rf "$scratch"; die "go2rtc.yaml has no api: block"; }
-      cp "$scratch/go2rtc.yaml" "$BUNDLE_DIR/go2rtc.yaml"
+
+      cp "$runtime" "$BUNDLE_DIR/go2rtc.yaml"
       if [ -f "$scratch/cameras.json" ]; then
         cp "$scratch/cameras.json" "$BUNDLE_DIR/cameras.json"
         [ -d "$BUNDLE_DIR/www" ] && cp "$scratch/cameras.json" "$BUNDLE_DIR/www/cameras.json"
+      elif [ ! -f "$BUNDLE_DIR/cameras.json" ]; then
+        echo "note: no cameras.json came with it. The page will list no camera until one arrives."
       fi
       rm -rf "$scratch"
       echo "Config installed in $BUNDLE_DIR"
@@ -569,7 +610,8 @@ Usage: ipcam <command> [options]
                        --deep uses the bundled scanner instead. It needs Node.js,
                        and it also finds cameras that speak no ONVIF.
                        Set ONVIF_USER and ONVIF_PASSWORD first.
-  config <action>      show, export <file.tgz>, or import <file.tgz|yaml|url>
+  config <action>      show, export <file.tgz>, or
+                       import <file.tgz|cameras.yaml|go2rtc.yaml|url>
   upgrade              Install the newest release, and keep the config
   link                 Link this command into PATH
   unlink               Remove the link

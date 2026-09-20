@@ -178,7 +178,9 @@ It accepts a comma-separated list.
 - Release archives hold `ipcam`, `www/`, `service/` and `build-info` only. No binary and no config:
   `install.sh` reads `go2rtc=` from `build-info` and fetches that binary from go2rtc's own upstream release.
 - The config never ships in a release. `ipcam config export|import` moves `go2rtc.yaml` plus
-  `cameras.json` between machines as a tarball.
+  `cameras.json` between machines as a tarball. Import sniffs the input: a tarball, a runtime
+  `go2rtc.yaml` (has `^api:`), or a source `cameras.yaml` (has `^cameras:`). The last one is converted
+  by calling the repo's `generate-config.mjs` via `build-info repo=`; with no repo it explains the options.
 - `bundle/build-info` records `repo=`, so `ipcam update` can call the generator on the build machine.
   It fails with a clear message on a machine that has no repository or no Node.js.
 - `camera-video.ts` retries the WebRTC offer with backoff (5 s to 60 s) after a `webrtc/offer` error from

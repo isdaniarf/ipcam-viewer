@@ -189,7 +189,7 @@ The command then works from anywhere.
 | `ipcam url` | Print the address and the viewer user name |
 | `ipcam update [--build]` | Rebuild the config from `cameras.yaml`, then restart |
 | `ipcam discover [--deep]` | Scan the network and write the config for the cameras it finds |
-| `ipcam config show\|export\|import` | Show, export or import the config |
+| `ipcam config show\|export\|import` | Show, export or import the config. Import takes a `.tgz`, a `cameras.yaml` or a `go2rtc.yaml` |
 | `ipcam upgrade` | Install the newest release, and keep the config |
 | `ipcam uninstall` | Stop the service, remove it, and remove the link |
 | `ipcam version` | Show the bundle and go2rtc versions |
