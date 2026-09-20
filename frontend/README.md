@@ -32,4 +32,4 @@ This copy has 3 local changes:
 - The element has a `destroy()` method. The method releases every listener, timer and connection.
 
 The file `src/lib/camera-video.ts` extends that class. It defines the element `camera-video`.
-It sets the LAN defaults, and it reports the stream status.
+It sets the LAN defaults, it reports the stream status, and it retries WebRTC after an offer error.

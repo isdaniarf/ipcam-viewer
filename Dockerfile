@@ -3,7 +3,7 @@ WORKDIR /app
 COPY scripts/package.json scripts/package-lock.json ./scripts/
 RUN cd scripts && npm ci --omit=dev
 COPY scripts/generate-config.mjs ./scripts/
-CMD ["node", "scripts/generate-config.mjs"]
+CMD ["node", "scripts/generate-config.mjs", "--target", "docker"]
 
 FROM node:22-alpine AS frontend-build
 WORKDIR /app

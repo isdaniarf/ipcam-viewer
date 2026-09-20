@@ -33,4 +33,7 @@ export declare class VideoRTC extends HTMLElement {
   ondisconnect(): void;
   onopen(): string[];
   onclose(): boolean;
+  onmse(): void;
+  onwebrtc(): void;
+  onpcvideo(video: HTMLVideoElement): void;
 }

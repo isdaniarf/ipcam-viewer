@@ -1,3 +1,8 @@
+server:
+  listen: ":80"
+  username: viewer
+  password: choose_a_viewer_password
+
 cameras:
   - name: hallway
     host: 192.168.68.54

@@ -4,9 +4,14 @@ export type CameraStatus = "connecting" | "live" | "offline";
 
 export const CAMERA_STATUS_EVENT = "camerastatus";
 
+const WEBRTC_RETRY_MIN_MS = 5000;
+const WEBRTC_RETRY_MAX_MS = 60000;
+
 export class CameraVideo extends VideoRTC {
   status: CameraStatus = "connecting";
   showControls = false;
+  webrtcRetryTimer = 0;
+  webrtcRetryDelay = WEBRTC_RETRY_MIN_MS;
 
   constructor() {
     super();
@@ -41,15 +46,50 @@ export class CameraVideo extends VideoRTC {
     const modes = super.onopen();
     if (this.onmessage) {
       this.onmessage.status = (msg) => {
-        if (msg.type === "error") this.setStatus("offline");
+        if (msg.type !== "error") return;
+        if (msg.value.includes("webrtc/offer")) {
+          this.scheduleWebrtcRetry();
+        } else {
+          this.setStatus("offline");
+        }
       };
     }
     return modes;
   }
 
+  scheduleWebrtcRetry(): void {
+    if (this.webrtcRetryTimer) return;
+    const delay = this.webrtcRetryDelay;
+    this.webrtcRetryDelay = Math.min(delay * 2, WEBRTC_RETRY_MAX_MS);
+    this.webrtcRetryTimer = window.setTimeout(() => {
+      this.webrtcRetryTimer = 0;
+      if (this.lifecycle.signal.aborted) return;
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+      if (this.pc && this.pc.connectionState !== "closed") return;
+      this.pc = null;
+      this.onwebrtc();
+    }, delay);
+  }
+
+  onpcvideo(video: HTMLVideoElement): void {
+    super.onpcvideo(video);
+    if (this.pcState === WebSocket.OPEN) this.webrtcRetryDelay = WEBRTC_RETRY_MIN_MS;
+  }
+
+  destroy(): void {
+    if (this.webrtcRetryTimer) {
+      window.clearTimeout(this.webrtcRetryTimer);
+      this.webrtcRetryTimer = 0;
+    }
+    super.destroy();
+  }
+
   onconnect(): boolean {
     const started = super.onconnect();
-    if (started) this.setStatus("connecting");
+    if (started) {
+      this.webrtcRetryDelay = WEBRTC_RETRY_MIN_MS;
+      this.setStatus("connecting");
+    }
     return started;
   }
 

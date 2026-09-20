@@ -1,0 +1,15 @@
+[Unit]
+Description=IP Camera Viewer (go2rtc)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User={{USER}}
+WorkingDirectory={{BUNDLE_DIR}}
+ExecStart={{BUNDLE_DIR}}/go2rtc -config {{BUNDLE_DIR}}/go2rtc.yaml
+Restart=always
+RestartSec=3
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

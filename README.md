@@ -13,44 +13,94 @@ It plays each stream with WebRTC. It falls back to MSE, and then to HLS.
 - A fullscreen view with audio and player controls.
 - A status badge for each tile: connecting, live or offline.
 - Low bandwidth use. The grid plays the substream. It pauses a tile when the tile leaves the screen.
-- No camera password reaches the browser.
+- One process at run time. go2rtc serves the page, the camera list and the streams.
+- A password protects the page and the streams.
 
 ## Requirements
 
-- Docker and Docker Compose, for the deployment.
-- Node.js 22, for local development.
-- Cameras on the same LAN as the host.
+On the machine where you build:
 
-## Quick start with Docker
+- Node.js 22.
+- `unzip`, for the macOS and Windows go2rtc archives.
 
-1. Copy the two templates.
+On the machine that runs the viewer: nothing. The bundle holds the binary, the page and the config.
+The installer uses launchd on macOS and systemd on Linux.
+
+## Quick start
+
+1. Copy the template and add your cameras. See [Camera configuration](#camera-configuration).
 
 ```bash
 cp cameras.yaml.example cameras.yaml
-cp .env.example .env
 ```
 
-2. Edit `cameras.yaml`. Add your cameras. See [Camera configuration](#camera-configuration).
-3. Edit `.env`. Set `HOST_IP` to the LAN IP address of the host.
-4. Start the stack.
+2. Install the build dependencies once.
 
 ```bash
-docker compose up --build
+cd scripts && npm install && cd ../frontend && npm install && cd ..
 ```
 
-5. Open `http://<host-ip>/` in a browser.
+3. Build the bundle. The script builds the page, downloads go2rtc for this machine, and writes the config.
 
-`HOST_IP` is mandatory. WebRTC sends this address to the browser as the connection candidate.
-The browser cannot reach the internal container address.
+```bash
+node scripts/bundle.mjs
+```
+
+4. Install the service.
+
+```bash
+./bundle/install.sh
+```
+
+5. Open `http://<host-ip>/` in a browser. Log in with the user and the password from `server:` in `cameras.yaml`.
+
+The bundle is self-contained. Keep the `bundle/` directory in place after the install, because the
+service runs go2rtc from there.
+
+### Install on another machine
+
+Build the bundle for the target platform, copy the directory, and run the installer there.
+
+```bash
+node scripts/bundle.mjs --platform linux_arm64 --out bundle-pi
+scp -r bundle-pi pi@192.168.1.20:~/ipcam
+ssh pi@192.168.1.20 '~/ipcam/install.sh'
+```
+
+Supported platforms: `mac_arm64`, `mac_amd64`, `linux_amd64`, `linux_arm64`, `linux_arm`,
+`linux_armv6` and `linux_i386`. On Linux the installer needs `sudo`, because it writes a systemd unit.
+
+### Change the cameras
+
+Edit `cameras.yaml`, then rebuild the config and restart the service.
+
+```bash
+node scripts/bundle.mjs --skip-build
+./bundle/install.sh restart
+```
+
+### Bundle options
+
+| Option | Effect |
+|--------|--------|
+| `--platform <name>` | Build for another platform. Default: this machine. |
+| `--out <dir>` | Write the bundle to another directory. Default: `bundle/`. |
+| `--version <x.y.z>` | Use another go2rtc release. Default: `1.9.14`. |
+| `--binary <path>` | Use a local go2rtc binary. No download. |
+| `--skip-build` | Keep the current `frontend/dist`. |
+
+The script keeps the downloaded binary when its version matches.
 
 ## Camera configuration
 
-The file `cameras.yaml` holds your cameras and your passwords. Git ignores this file.
-
-Each camera declares one block for each protocol that it supports. A block turns that protocol on.
-The generator creates no stream for an absent block.
+The file `cameras.yaml` holds the viewer password, your cameras and their passwords. Git ignores this file.
 
 ```yaml
+server:
+  listen: ":80"
+  username: viewer
+  password: choose_a_viewer_password
+
 cameras:
   - name: hallway
     label: Hallway
@@ -68,6 +118,15 @@ cameras:
       password: tplink_cloud_password
 ```
 
+### Server fields
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `password` | yes | — | The viewer password. It protects the page, the camera list and the streams. |
+| `username` | no | `viewer` | The viewer user name. |
+| `listen` | no | `:80` | The address and port of the web server. |
+| `candidates` | no | — | A list of host IP addresses for WebRTC. See [Remote access](#remote-access). |
+
 ### Camera fields
 
 | Field | Required | Default | Description |
@@ -79,6 +138,9 @@ cameras:
 | `password` | for RTSP and ONVIF | — | The camera password. Each block can override it. |
 
 ### Protocol fields
+
+Each camera declares one block for each protocol that it supports. A block turns that protocol on.
+The generator creates no stream for an absent block.
 
 | Block | Field | Required | Default | Description |
 |-------|-------|----------|---------|-------------|
@@ -97,73 +159,130 @@ resolution. Delete the line if your camera returns an error for that path.
 
 The generator checks the file. It reports every problem, and then it writes no file.
 
-## Development
+## Find cameras on the LAN
 
-1. Download the `go2rtc` binary for your platform. Put it in `go2rtc/go2rtc`.
-   Get it from the [go2rtc releases](https://github.com/AlexxIT/go2rtc/releases).
-2. Generate the configuration.
+The script `scripts/discover-cameras.mjs` finds the cameras on your network. It sends a WS-Discovery
+probe, sweeps the common camera ports on each local subnet, and prints the model and the
+authentication state of each host. It has no npm dependency.
 
 ```bash
-cd scripts && npm install && cd ..
-node scripts/generate-config.mjs
+node scripts/discover-cameras.mjs
+node scripts/discover-cameras.mjs --subnet 192.168.1.0/24 --json
+ONVIF_USER=admin ONVIF_PASSWORD=secret node scripts/discover-cameras.mjs
 ```
 
-3. Start go2rtc.
+Run it on the host, not in Docker. Docker on macOS blocks multicast and hides the ARP table.
+`ONVIF_USER` and `ONVIF_PASSWORD` unlock the device information on cameras that reject the anonymous call.
+
+| Option | Effect |
+|--------|--------|
+| `--subnet <cidr>` | Sweep this subnet. Repeat the option for more subnets. Default: the local subnets. |
+| `--ports <list>` | Sweep these ports, comma separated. Default: `80,443,554,2020,8000,8080,8443,8554,8899`. |
+| `--timeout <ms>` | Timeout for one TCP connect or one request. Default: `1000`. |
+| `--wait <ms>` | Time to collect the WS-Discovery answers. Default: `3000`. |
+| `--concurrency <n>` | Parallel TCP connects in the sweep. Default: `256`. |
+| `--skip-discovery` | Send no WS-Discovery probe. |
+| `--skip-sweep` | Sweep no ports. Inspect only the hosts that answer the probe. |
+| `--offline` | Look up no MAC vendor online. |
+| `--json` | Print the result as JSON. |
+
+## Remote access
+
+Tailscale is a good fit. Install Tailscale on the host and on your phone, then open the host's
+MagicDNS name. go2rtc detects the host addresses at run time, so it advertises the Tailscale address
+for WebRTC as soon as Tailscale is connected.
+
+Set `server.candidates` when you want a fixed list instead, for example on a host with many interfaces.
+Do not use Tailscale Funnel. Funnel publishes the viewer to the open internet.
+
+## Ports
+
+| Port | Purpose |
+|------|---------|
+| 80, or `server.listen` | The page, the camera list, the WebSocket and the go2rtc API |
+| 8555 TCP and UDP | WebRTC media |
+
+The go2rtc API shares the web port. The viewer password protects every path on it.
+Requests from the host itself skip the password. That is go2rtc behaviour.
+
+## Where the passwords are
+
+- `cameras.yaml` holds the viewer password and the camera passwords in plain text.
+- `bundle/go2rtc.yaml` holds the same values, because go2rtc reads them from there.
+- The browser receives `cameras.json`. This file holds camera names and stream names only.
+- The holder of the viewer password can read the camera passwords through the go2rtc API.
+  Give the viewer password to people who may know the camera passwords.
+
+## Docker
+
+Docker is the alternative when you want no service on the host. It runs go2rtc behind nginx.
+In this layout the go2rtc API stays inside the Docker network, and nginx proxies the stream paths only.
 
 ```bash
+cp cameras.yaml.example cameras.yaml
+cp .env.example .env
+docker compose up --build
+```
+
+`HOST_IP` in `.env` is mandatory here. The container cannot detect the host addresses, so the
+generator writes `HOST_IP` as the WebRTC candidate. Separate several addresses with a comma.
+The Docker layout has no password. The `server:` block is ignored.
+
+## Development
+
+1. Generate the configuration, then start go2rtc from the repository.
+
+```bash
+node scripts/generate-config.mjs
 ./go2rtc/go2rtc -config go2rtc/go2rtc.yaml
 ```
 
-4. Start the dev server in a second terminal.
+The generator writes `go2rtc/go2rtc.yaml`. It needs `go2rtc/go2rtc`, the binary for your platform.
+Copy it from a bundle, or download it from the [go2rtc releases](https://github.com/AlexxIT/go2rtc/releases).
+
+2. Start the dev server in a second terminal.
 
 ```bash
-cd frontend && npm install && npm run dev
+cd frontend && npm run dev
 ```
 
-The dev server proxies `/api/ws` and `/api/hls` to `http://localhost:1984`.
-Set `GO2RTC_URL` to use a different address.
-
-Run `node scripts/generate-config.mjs` again after each change to `cameras.yaml`.
+The dev server proxies `/api/ws` and `/api/hls` to `http://localhost:1984`. Set `GO2RTC_URL` to use
+a different address. Requests from the host skip the password, so the dev server needs no login.
 
 ## Commands
 
 | Task | Command |
 |------|---------|
-| Generate the configuration | `node scripts/generate-config.mjs` |
+| Build the bundle | `node scripts/bundle.mjs` |
+| Install, restart, or remove the service | `./bundle/install.sh [install\|restart\|uninstall\|status]` |
+| Generate the configuration only | `node scripts/generate-config.mjs [--target native\|docker]` |
+| Find cameras on the LAN | `node scripts/discover-cameras.mjs [--help]` |
 | Start the dev server | `cd frontend && npm run dev` |
 | Build the frontend | `cd frontend && npm run build` |
 | Check the code style | `cd frontend && npm run lint` |
-| Start the stack | `docker compose up --build` |
-| Stop the stack | `docker compose down` |
-
-## Ports
-
-| Port | Service | Scope |
-|------|---------|-------|
-| 80 | Web interface | Your LAN |
-| 8555 TCP and UDP | WebRTC media | Your LAN |
-| 1984 | go2rtc API | The Docker network only |
-
-The stack does not publish port 1984. The go2rtc API shows the camera passwords in plain text.
-nginx proxies `/api/ws` and `/api/hls` only. It returns 404 for every other `/api/` path.
-
-The browser receives `/cameras.json`. This file holds camera names and stream names only.
+| Start the Docker stack | `docker compose up --build` |
 
 ## Troubleshooting
 
+**The browser asks for a password again and again.**
+Check `server.username` and `server.password` in `cameras.yaml`. Rebuild with `--skip-build` and restart.
+
+**The service does not start.**
+On macOS, read `bundle/go2rtc.log`. On Linux, run `journalctl -u ipcam-viewer -f`.
+A common cause is another program on port 80. Change `server.listen`, for example to `:8080`.
+
 **A tile stays on "Connecting" or shows "Offline".**
 Check that the camera answers on its RTSP port. Check the `path` value.
-Some cameras close the RTSP port after a firmware update.
 
 **The browser shows no camera.**
-Run the generator again. In Docker, read the log of the `config-gen` service.
-This service must finish before go2rtc starts.
-
-**The video does not start in Docker, but it starts in development.**
-Check `HOST_IP` in `.env`. Set it to the LAN IP address of the host, and start the stack again.
+Run `node scripts/bundle.mjs --skip-build` and restart the service. Read the generator output.
 
 **The tile is black, and the tile shows "Live".**
 The substream path is wrong for that camera. Delete `sub_path` for the camera.
+
+**Video starts on the LAN but not over Tailscale.**
+Check that Tailscale is connected on the host. Or set `server.candidates` to the LAN address and the
+Tailscale address of the host.
 
 ## Project layout
 
@@ -171,7 +290,10 @@ The substream path is wrong for that camera. Delete `sub_path` for the camera.
 |------|---------|
 | `frontend/` | The React client. See [frontend/README.md](frontend/README.md). |
 | `scripts/generate-config.mjs` | It reads `cameras.yaml`. It writes `go2rtc.yaml` and `cameras.json`. |
-| `nginx/nginx.conf` | It serves the client, and it proxies the two stream paths. |
-| `docker-compose.yml` | The three services: `config-gen`, `go2rtc` and `web`. |
-| `cameras.yaml` | Your cameras and your passwords. Git ignores this file. |
-| `.env` | The `HOST_IP` value. Git ignores this file. |
+| `scripts/bundle.mjs` | It builds the self-contained bundle for a platform. |
+| `scripts/discover-cameras.mjs` | It finds cameras on the LAN with WS-Discovery and a port sweep. |
+| `scripts/native/` | The launchd, systemd and installer templates that go into the bundle. |
+| `bundle/` | The generated bundle. Git ignores this directory. |
+| `nginx/nginx.conf` | The nginx config for the Docker layout. |
+| `docker-compose.yml` | The Docker layout: `config-gen`, `go2rtc` and `web`. |
+| `cameras.yaml` | Your passwords and cameras. Git ignores this file. |
