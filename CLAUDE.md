@@ -26,11 +26,13 @@ Multi-camera IP video streaming viewer. React frontend talks to go2rtc for RTSP/
 │           ├── video-rtc.d.ts   # Types for the vendored player
 │           └── camera-video.ts  # <camera-video> subclass, LAN defaults
 ├── scripts/
-│   ├── generate-config.mjs     # Reads cameras.yaml → writes go2rtc.yaml + cameras.json
+│   ├── generate-config.mjs     # Reads cameras.ini → writes go2rtc.yaml + cameras.json (no npm deps)
 │   ├── bundle.mjs              # Builds the self-contained native bundle: binary + www + config
-│   ├── discover-cameras.mjs    # WS-Discovery + port sweep; writes cameras.yaml and runtime config
+│   ├── discover-cameras.mjs    # WS-Discovery + port sweep; writes cameras.ini and runtime config
 │   ├── lib/config-model.mjs    # Shared camera->streams/manifest logic; zero imports by design
-│   └── native/                 # ipcam CLI, launchd plist and systemd unit templates
+│   ├── lib/ini.mjs             # INI reader, zero imports
+│   ├── test-config-parity.mjs  # Proves config.awk == the JavaScript reader
+│   └── native/                 # ipcam CLI, config.awk reader, launchd plist and systemd unit
 ├── install.sh                  # curl | sh entry point; installs a published release
 ├── .github/workflows/release.yml  # builds + publishes platform archives on a v* tag
 ├── bundle/                     # Generated native bundle (gitignored)
@@ -39,8 +41,8 @@ Multi-camera IP video streaming viewer. React frontend talks to go2rtc for RTSP/
 ├── go2rtc/                     # Generated config + binary (gitignored)
 ├── Dockerfile                  # Multi-target: config-gen, web
 ├── docker-compose.yml          # 3 services: config-gen, go2rtc, web
-├── cameras.yaml                # Camera definitions (gitignored, has credentials)
-├── cameras.yaml.example        # Template for cameras.yaml
+├── cameras.ini                 # Camera definitions (gitignored, has credentials)
+├── cameras.ini.example         # Template for cameras.ini
 ├── .env                        # HOST_IP for Docker WebRTC (gitignored)
 └── .env.example                # Template for .env
 ```
@@ -61,39 +63,41 @@ Two layouts exist. The native layout is the primary one.
 
 ### Camera configuration
 
-Each camera in `cameras.yaml` declares the protocols that it supports. A protocol block turns that
-protocol on. The generator creates no stream for an absent block.
+`cameras.ini` is plain INI: one `[section]` per camera, `key = value` lines, a value runs to the end
+of the line with surrounding whitespace trimmed, no quoting, `;`/`#` comments only at line start.
+Unknown keys, duplicate keys, empty values, tabs-only oddities and flow syntax are hard errors.
 
-```yaml
-server:                    # native layout only, ignored by --target docker
-  listen: ":80"            # default ":80"
-  username: viewer         # default "viewer"
-  password: secret         # required
-  candidates: []           # optional fixed WebRTC host IPs; default: go2rtc detects them at run time
+```ini
+[server]                 ; native layout only, ignored by --target docker
+listen = :80             ; default :80
+username = viewer        ; default viewer
+password = secret        ; required
+candidates = 1.2.3.4     ; optional, comma separated; default: go2rtc detects at run time
 
-cameras:
-  - name: hallway          # letters, digits, "_" and "-" only
-    label: Hallway         # optional, the UI derives it from the name
-    host: 192.168.1.54
-    username: camera_account
-    password: camera_password
-    rtsp:
-      port: 554            # default 554
-      path: /stream1       # required
-      sub_path: /stream2   # optional low resolution stream
-    onvif:
-      port: 2020           # default 80, Tapo uses 2020
-    tapo:
-      username: tplink_email      # optional
-      password: tplink_password   # required, this is the cloud password
+[hallway]                ; section name = camera name, [A-Za-z0-9_-]+
+label = Hallway          ; optional, default title-cased name
+host = 192.168.1.54
+username = camera_account
+password = camera_password
+rtsp.path = /stream1     ; required for RTSP; rtsp.port default 554
+rtsp.sub_path = /stream2 ; optional low resolution stream
+onvif.port = 2020        ; default 80; onvif.profile / onvif.sub_profile pick ONVIF profiles
+tapo.password = cloud    ; required for Tapo; this is the TP-Link cloud password
 ```
 
-The Tapo password is the TP-Link cloud password. It is not the RTSP password.
-The generator rejects a `tapo:` block without its own password.
+Any `proto.*` key enables that protocol; `proto = on|off` toggles it explicitly. `rtsp.username`,
+`onvif.username` and their password twins override the camera account per protocol.
+
+Two readers exist and must agree: `scripts/lib/ini.mjs` + `scripts/lib/config-model.mjs` (JavaScript,
+used by `generate-config.mjs` and `discover-cameras.mjs`) and `scripts/native/config.awk` (POSIX awk,
+used by the installed bundle via `ipcam`). Both emit the same canonical `go2rtc.yaml` (every string
+single-quoted) and the same `cameras.json`. `scripts/test-config-parity.mjs` diffs them byte for byte
+over synthetic cases plus `cameras.ini.example` and a local `cameras.ini`; CI runs it on push and before
+every release. Extend the schema in both readers and add a parity case, or the build fails.
 
 ### Stream naming convention
 
-The generator creates `{name}.rtsp`, `{name}.rtsp.sub`, `{name}.onvif` and `{name}.tapo`.
+The generator creates `{name}.rtsp`, `{name}.rtsp.sub`, `{name}.onvif`, `{name}.onvif.sub` and `{name}.tapo`.
 It writes the names into `cameras.json`. The frontend reads that file and never parses stream names.
 
 The grid plays `sub` when it exists. The fullscreen view plays the main stream with audio.
@@ -110,7 +114,7 @@ network, because `GET /api/streams` and `GET /api/config` show the camera passwo
 ## Native bundle
 
 ```bash
-cd scripts && npm install && cd ../frontend && npm install && cd ..
+cd frontend && npm install && cd ..
 node scripts/bundle.mjs            # builds frontend, downloads go2rtc, writes bundle/
 ./bundle/ipcam install             # launchd on macOS, systemd on Linux; links ipcam into ~/.local/bin
 ipcam status | logs | restart | url | update | uninstall
@@ -127,7 +131,6 @@ The generator omits `webrtc.candidates` for the native target unless `server.can
 
 ```bash
 # 1. Generate go2rtc config and the camera manifest (native target by default)
-cd scripts && npm install && cd ..
 node scripts/generate-config.mjs   # options: --target native|docker, --out, --static-dir, --cameras
 
 # 2. Start go2rtc
@@ -146,7 +149,7 @@ Set `GO2RTC_URL` to change that address. Vite serves `/cameras.json` from `front
 ## Docker Deployment
 
 ```bash
-cp cameras.yaml.example cameras.yaml   # Edit with your cameras
+cp cameras.ini.example cameras.ini     # Edit with your cameras
 cp .env.example .env                    # Set HOST_IP to your LAN IP
 docker compose up --build
 ```
@@ -177,15 +180,16 @@ It accepts a comma-separated list.
   or by download. Verified: a quarantined binary produces no output at all.
 - Release archives hold `ipcam`, `www/`, `service/` and `build-info` only. No binary and no config:
   `install.sh` reads `go2rtc=` from `build-info` and fetches that binary from go2rtc's own upstream release.
-- The config never ships in a release. `ipcam config export|import` moves `go2rtc.yaml` plus
-  `cameras.json` between machines as a tarball. Import sniffs the input: a tarball, a runtime
-  `go2rtc.yaml` (has `^api:`), or a source `cameras.yaml` (has `^cameras:`). The last one is converted
-  by calling the repo's `generate-config.mjs` via `build-info repo=`; with no repo it explains the options.
+- The config never ships in a release. `ipcam config export|import` moves `cameras.ini`, `go2rtc.yaml`
+  and `cameras.json` between machines as a tarball. Import sniffs the input: a tarball, a `cameras.ini`
+  (has a `[section]` line), or a runtime `go2rtc.yaml` (has `^api:`). A `cameras.ini` is rendered on the
+  spot by `config.awk`, so no repo and no Node are needed. `ipcam update` does the same for the bundle's
+  own `cameras.ini` (copying the repo's copy first when the repo is present); `--build` needs the repo.
 - `bundle/build-info` records `repo=`, so `ipcam update` can call the generator on the build machine.
   It fails with a clear message on a machine that has no repository or no Node.js.
 - `camera-video.ts` retries the WebRTC offer with backoff (5 s to 60 s) after a `webrtc/offer` error from
   go2rtc, because the vendored library otherwise stays on MSE until a reload. Seen on cold starts.
-- `generate-config.mjs` uses the `yaml` npm package (in `scripts/package.json`)
+- `scripts/` has no npm dependency at all. `generate-config.mjs` reads INI and emits YAML by hand.
 - `discover-cameras.mjs` has no npm dependency. It uses `dgram`, `net`, `http` and `https` only.
   It emits YAML by hand through `yamlScalar` and `emitYaml`, so keep it dependency free.
 - `scripts/lib/config-model.mjs` holds the camera -> streams/manifest logic. `generate-config.mjs`
@@ -193,7 +197,8 @@ It accepts a comma-separated list.
   because the release ships it next to the discovery script without npm.
 - `--write-runtime <dir>` writes `go2rtc.yaml` + `cameras.json` (+ `www/cameras.json`) with no YAML
   parser, so a release install can configure itself. `ipcam discover --deep` wraps it.
-- `ipcam discover` (no flag) needs no Node at all. It starts the bundled go2rtc on a loopback port and
+- `ipcam discover` (no flag) needs no Node at all. It writes `cameras.ini` (with `onvif.profile` /
+  `onvif.sub_profile`) and renders it through `config.awk`, so every path ends in the same reader. It starts the bundled go2rtc on a loopback port and
   uses go2rtc's own `GET /api/onvif`: with no `src` it runs WS-Discovery, with `src=onvif://user:pass@host:port`
   it lists the profiles as `onvif://...?subtype=profile_N` source URLs, which are usable streams
   (verified: profile_1 2560x1440, profile_2 640x360). Discovery is UDP, so it probes twice and merges.
@@ -204,7 +209,7 @@ It accepts a comma-separated list.
   Basic auth, so it can find a path on cameras without ONVIF.
   Run it on the host. Docker on macOS blocks multicast and hides the ARP table.
   `ONVIF_USER` and `ONVIF_PASSWORD` unlock `GetDeviceInformation` on cameras that reject the anonymous call.
-- Sensitive and generated files are gitignored: `cameras.yaml`, `.env`, `go2rtc/go2rtc.yaml`,
+- Sensitive and generated files are gitignored: `cameras.ini`, `.env`, `go2rtc/go2rtc.yaml`,
   `go2rtc/cameras.json` and `frontend/public/cameras.json`
 
 ## Commands

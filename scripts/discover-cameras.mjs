@@ -11,6 +11,7 @@ import { parseArgs, promisify } from "node:util";
 import {
   buildCameras,
   buildGo2rtcConfig,
+  emitGo2rtcYaml,
   manifestJson,
 } from "./lib/config-model.mjs";
 
@@ -92,11 +93,11 @@ Options:
   --offline            Look up no MAC vendor online.
   --json               Print the result as JSON.
   --write-config <file>
-                       Write a cameras.yaml for the cameras that were found.
+                       Write a cameras.ini for the cameras that were found.
                        Use "-" for stdout. It never overwrites an existing file.
   --write-runtime <dir>
                        Write go2rtc.yaml and cameras.json straight into <dir>.
-                       This needs no cameras.yaml and no YAML parser.
+                       This needs no cameras.ini and no parser.
   --force              Allow --write-runtime to replace an existing go2rtc.yaml.
   --help               Show this text.
 
@@ -982,27 +983,6 @@ function authSummary(host) {
   };
 }
 
-const YAML_RESERVED = new Set([
-  "true", "false", "null", "yes", "no", "on", "off", "y", "n", "~",
-]);
-
-function yamlScalar(value) {
-  if (typeof value === "number") return String(value);
-  const text = String(value);
-  const startsSafely = /^[A-Za-z0-9_/.]/.test(text);
-  const hasIndicator = /:\s|\s#|[\x00-\x1f\x7f]/.test(text);
-  const padded = text !== text.trim();
-  const looksNumeric = /^[-+]?[0-9]*\.?[0-9]+$/.test(text);
-  const safe =
-    text.length > 0 &&
-    startsSafely &&
-    !hasIndicator &&
-    !padded &&
-    !looksNumeric &&
-    !YAML_RESERVED.has(text.toLowerCase());
-  return safe ? text : `'${text.replace(/'/g, "''")}'`;
-}
-
 function slug(text) {
   const cleaned = String(text ?? "")
     .normalize("NFKD")
@@ -1113,17 +1093,25 @@ function planCameras(cameras, credentials) {
     } else if (plan) {
       notes.push(
         `${host.ip} (${name}): RTSP answers on port ${plan.port}, but the path stayed unknown. ` +
-          "Add an rtsp: block with the path yourself.",
+          "Add rtsp.path yourself.",
       );
     }
-    if (onvifPort !== null) entry.onvif = { port: onvifPort };
+    if (onvifPort !== null) {
+      entry.onvif = { port: onvifPort };
+      if (host.streams) {
+        entry.onvif.profile = host.streams.main.token;
+        if (host.streams.sub && host.streams.sub.token !== host.streams.main.token) {
+          entry.onvif.sub_profile = host.streams.sub.token;
+        }
+      }
+    }
     entries.push(entry);
   }
 
   if (!credentials) {
     notes.push("Set ONVIF_USER and ONVIF_PASSWORD to fill in the camera account, or edit the file.");
   }
-  notes.push("Tapo needs the TP-Link cloud password. Add a tapo: block yourself when you want it.");
+  notes.push("Tapo needs the TP-Link cloud password. Add tapo.password yourself when you want it.");
 
   const server = {
     listen: ":80",
@@ -1133,51 +1121,34 @@ function planCameras(cameras, credentials) {
   return { entries, server, notes };
 }
 
-function emitYaml(value, indent = 0) {
-  const pad = " ".repeat(indent);
-  if (Array.isArray(value)) {
-    if (value.length === 0) return "[]";
-    return `\n${value.map((item) => `${pad}- ${String(emitYaml(item, indent + 2)).trim()}`).join("\n")}`;
-  }
-  if (value && typeof value === "object") {
-    const lines = [];
-    for (const [key, item] of Object.entries(value)) {
-      if (item === undefined) continue;
-      const rendered = emitYaml(item, indent + 2);
-      const joiner = typeof rendered === "string" && rendered.startsWith("\n") ? "" : " ";
-      lines.push(`${pad}${key}:${joiner}${rendered}`);
-    }
-    return `\n${lines.join("\n")}`;
-  }
-  return yamlScalar(value);
+
+function iniValue(value) {
+  return String(value).replace(/[\r\n]+/g, " ").replace(/^[ \t]+|[ \t]+$/g, "");
 }
 
-function cameraConfigText(plan) {
-  const lines = ["server:"];
-  lines.push(`  listen: ${yamlScalar(plan.server.listen)}`);
-  lines.push(`  username: ${yamlScalar(plan.server.username)}`);
-  lines.push(`  password: ${yamlScalar(plan.server.password)}`);
-  lines.push("");
-  lines.push("cameras:");
+function cameraConfigIni(plan) {
+  const lines = ["[server]"];
+  lines.push(`listen = ${iniValue(plan.server.listen)}`);
+  lines.push(`username = ${iniValue(plan.server.username)}`);
+  lines.push(`password = ${iniValue(plan.server.password)}`);
   for (const entry of plan.entries) {
-    lines.push(`  - name: ${yamlScalar(entry.name)}`);
-    if (entry.label) lines.push(`    label: ${yamlScalar(entry.label)}`);
-    lines.push(`    host: ${yamlScalar(entry.host)}`);
-    lines.push(`    username: ${yamlScalar(entry.username)}`);
-    lines.push(`    password: ${yamlScalar(entry.password)}`);
+    lines.push("", `[${entry.name}]`);
+    if (entry.label) lines.push(`label = ${iniValue(entry.label)}`);
+    lines.push(`host = ${iniValue(entry.host)}`);
+    lines.push(`username = ${iniValue(entry.username)}`);
+    lines.push(`password = ${iniValue(entry.password)}`);
     if (entry.rtsp) {
-      lines.push("    rtsp:");
-      lines.push(`      port: ${entry.rtsp.port}`);
-      lines.push(`      path: ${yamlScalar(entry.rtsp.path)}`);
-      if (entry.rtsp.sub_path) lines.push(`      sub_path: ${yamlScalar(entry.rtsp.sub_path)}`);
+      lines.push(`rtsp.port = ${entry.rtsp.port}`);
+      lines.push(`rtsp.path = ${iniValue(entry.rtsp.path)}`);
+      if (entry.rtsp.sub_path) lines.push(`rtsp.sub_path = ${iniValue(entry.rtsp.sub_path)}`);
     }
     if (entry.onvif) {
-      lines.push("    onvif:");
-      lines.push(`      port: ${entry.onvif.port}`);
+      lines.push(`onvif.port = ${entry.onvif.port}`);
+      if (entry.onvif.profile) lines.push(`onvif.profile = ${iniValue(entry.onvif.profile)}`);
+      if (entry.onvif.sub_profile) lines.push(`onvif.sub_profile = ${iniValue(entry.onvif.sub_profile)}`);
     }
-    lines.push("");
   }
-  return `${lines.join("\n").trimEnd()}\n`;
+  return `${lines.join("\n")}\n`;
 }
 
 function writeRuntime(directory, plan) {
@@ -1194,7 +1165,7 @@ function writeRuntime(directory, plan) {
   };
   const config = buildGo2rtcConfig({ streams, api, candidates: [] });
   mkdirSync(directory, { recursive: true });
-  writeFileSync(join(directory, "go2rtc.yaml"), `${String(emitYaml(config)).replace(/^\n/, "")}\n`);
+  writeFileSync(join(directory, "go2rtc.yaml"), emitGo2rtcYaml(config));
   const json = manifestJson(manifest);
   writeFileSync(join(directory, "cameras.json"), json);
   if (existsSync(join(directory, "www"))) writeFileSync(join(directory, "www", "cameras.json"), json);
@@ -1368,7 +1339,7 @@ async function main() {
     const usable = plan.entries.filter((entry) => entry.rtsp || entry.onvif);
 
     if (options.writeConfig) {
-      const text = cameraConfigText(plan);
+      const text = cameraConfigIni(plan);
       if (options.writeConfig === "-") {
         process.stdout.write(text);
       } else {

@@ -22,6 +22,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Check the awk and javascript config readers agree
+        run: node scripts/test-config-parity.mjs
+
       - name: Build the frontend
         working-directory: frontend
         run: |
@@ -42,7 +45,8 @@ jobs:
             cp scripts/native/ipcam scripts/native/install.sh "$stage/"
             mkdir -p "$stage/scripts/lib"
             cp scripts/discover-cameras.mjs "$stage/scripts/"
-            cp scripts/lib/config-model.mjs "$stage/scripts/lib/"
+            cp scripts/native/config.awk "$stage/scripts/"
+            cp scripts/lib/config-model.mjs scripts/lib/ini.mjs "$stage/scripts/lib/"
             cp scripts/native/launchd.plist scripts/native/systemd.service "$stage/service/"
             chmod +x "$stage/ipcam" "$stage/install.sh"
             printf 'platform=%s\ngo2rtc=%s\nbuilt=%s\nversion=%s\n' \

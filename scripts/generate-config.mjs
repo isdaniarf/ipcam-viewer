@@ -2,20 +2,22 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { networkInterfaces } from "node:os";
-import YAML from "yaml";
 import {
   buildCameras,
   buildGo2rtcConfig,
   buildServer,
+  configFromIni,
+  emitGo2rtcYaml,
   manifestJson,
 } from "./lib/config-model.mjs";
+import { looksLikeOldYaml, parseIni } from "./lib/ini.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const root = resolve(__dirname, "..");
 
 export class ConfigError extends Error {
   constructor(problems) {
-    super(`cameras.yaml has ${problems.length} problem(s)`);
+    super(`cameras.ini has ${problems.length} problem(s)`);
     this.problems = problems;
   }
 }
@@ -56,15 +58,24 @@ function webrtcCandidates(server, target, warnings) {
 
 function readCamerasFile(camerasFile, errors) {
   if (!existsSync(camerasFile)) {
-    errors.push(`${camerasFile} does not exist. Copy cameras.yaml.example to cameras.yaml.`);
-    return { cameras: [], server: undefined };
+    errors.push(`${camerasFile} does not exist. Copy cameras.ini.example to cameras.ini.`);
+    return { cameras: [], server: null };
   }
-  const parsed = YAML.parse(readFileSync(camerasFile, "utf-8"));
-  if (!parsed || !Array.isArray(parsed.cameras) || parsed.cameras.length === 0) {
-    errors.push("cameras.yaml must contain a non-empty `cameras` list.");
-    return { cameras: [], server: undefined };
+  const text = readFileSync(camerasFile, "utf-8");
+  if (looksLikeOldYaml(text)) {
+    errors.push(
+      `${camerasFile} is in the old YAML format. The file is INI now: one [section] per camera, ` +
+        "and `rtsp.path = /stream1` style keys. See cameras.ini.example.",
+    );
+    return { cameras: [], server: null };
   }
-  return { cameras: parsed.cameras, server: parsed.server };
+  const parsed = parseIni(text);
+  errors.push(...parsed.errors);
+  const { server, cameras } = configFromIni(parsed.sections, errors);
+  if (cameras.length === 0 && errors.length === 0) {
+    errors.push(`${camerasFile} names no camera. Add a [camera_name] section.`);
+  }
+  return { cameras, server };
 }
 
 export function generate(options = {}) {
@@ -72,10 +83,11 @@ export function generate(options = {}) {
   if (target !== "native" && target !== "docker") {
     throw new Error(`unknown target "${target}". Use "native" or "docker".`);
   }
-  const camerasFile = options.camerasFile ?? resolve(root, "cameras.yaml");
+  const camerasFile = options.camerasFile ?? resolve(root, "cameras.ini");
   const outDir = options.outDir ?? resolve(root, "go2rtc");
   const staticDir = options.staticDir ?? resolve(root, "frontend", "dist");
   const staticDirPath = isAbsolute(staticDir) ? staticDir : resolve(outDir, staticDir);
+  const writeDevManifest = options.writeDevManifest ?? true;
 
   const errors = [];
   const warnings = [];
@@ -94,12 +106,11 @@ export function generate(options = {}) {
         password: serverConfig.password,
       }
     : { listen: ":1984" };
-
   const go2rtcConfig = buildGo2rtcConfig({ streams, api, candidates });
 
   mkdirSync(outDir, { recursive: true });
   const configPath = resolve(outDir, "go2rtc.yaml");
-  writeFileSync(configPath, YAML.stringify(go2rtcConfig));
+  writeFileSync(configPath, emitGo2rtcYaml(go2rtcConfig));
 
   const json = manifestJson(manifest);
   const manifestPaths = [resolve(outDir, "cameras.json")];
@@ -110,7 +121,7 @@ export function generate(options = {}) {
       warnings.push(`static directory ${staticDirPath} does not exist yet. Build the frontend, then run this again.`);
     }
   }
-  if (existsSync(resolve(root, "frontend"))) {
+  if (writeDevManifest && existsSync(resolve(root, "frontend"))) {
     const publicDir = resolve(root, "frontend", "public");
     mkdirSync(publicDir, { recursive: true });
     manifestPaths.push(resolve(publicDir, "cameras.json"));
@@ -162,7 +173,7 @@ if (invokedDirectly) {
   } catch (error) {
     if (error instanceof ConfigError) {
       for (const problem of error.problems) console.error(`error: ${problem}`);
-      console.error(`Wrote no files. Correct ${error.problems.length} problem(s) in cameras.yaml.`);
+      console.error(`Wrote no files. Correct ${error.problems.length} problem(s) in cameras.ini.`);
     } else {
       console.error(`error: ${error.message}`);
     }

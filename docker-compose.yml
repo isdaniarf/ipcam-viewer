@@ -2,7 +2,7 @@ services:
   config-gen:
     build: { context: ., target: config-gen }
     volumes:
-      - ./cameras.yaml:/app/cameras.yaml:ro
+      - ./cameras.ini:/app/cameras.ini:ro
       - go2rtc-data:/app/go2rtc
     environment:
       - HOST_IP=${HOST_IP:-}

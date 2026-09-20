@@ -83,7 +83,7 @@ allow_unsigned_binary() {
 
 require_bundle() {
   [ -x "$BUNDLE_DIR/go2rtc" ] || die "no go2rtc binary in $BUNDLE_DIR"
-  [ -f "$CONFIG" ] || die "no go2rtc.yaml in $BUNDLE_DIR. Run: ipcam config import <file.tgz>"
+  [ -f "$CONFIG" ] || die "no config in $BUNDLE_DIR. Run: ipcam discover, or: ipcam config import cameras.ini"
 }
 
 render() {
@@ -163,7 +163,7 @@ report_start_failure() {
   fi
   echo "" >&2
   echo "A port below 1024 can need root on some systems." >&2
-  echo "Set a high port in cameras.yaml under server.listen, for example \":8080\"," >&2
+  echo "Set a high port in cameras.ini under [server], for example listen = :8080," >&2
   echo "then run: ipcam update" >&2
 }
 
@@ -248,54 +248,31 @@ cmd_update() {
       *) die "unknown option $argument" ;;
     esac
   done
-  repo=$(build_info repo) || die "this bundle records no repository. Rebuild it on the machine that holds the sources."
-  [ -d "$repo" ] || die "the repository $repo is gone. Rebuild the bundle there, then copy it again."
-  command -v node >/dev/null 2>&1 || die "node is not installed. Rebuild the bundle on the machine that holds the sources."
+  repo=$(build_info repo) || repo=""
+
   if [ "$build" = yes ]; then
+    [ -n "$repo" ] && [ -d "$repo" ] || die "--build needs the repository that built this bundle."
+    command -v node >/dev/null 2>&1 || die "node is not installed"
     node "$repo/scripts/bundle.mjs" --out "$BUNDLE_DIR"
   else
-    node "$repo/scripts/bundle.mjs" --skip-build --out "$BUNDLE_DIR"
+    if [ -n "$repo" ] && [ -f "$repo/cameras.ini" ]; then cp "$repo/cameras.ini" "$BUNDLE_DIR/cameras.ini"; fi
+    render_config
+    echo "Config regenerated from $BUNDLE_DIR/cameras.ini"
   fi
-  cmd_restart
-}
 
-config_files() { printf 'go2rtc.yaml cameras.json\n'; }
-
-service_is_this_bundle() {
-  if [ "$OS" = macos ]; then
-    [ -f "$(plist_path)" ] || return 1
-    grep -q "$BUNDLE_DIR/go2rtc" "$(plist_path)" 2>/dev/null
+  if service_is_this_bundle; then
+    cmd_restart
   else
-    [ -f "$(unit_path)" ] || return 1
-    grep -q "$BUNDLE_DIR/go2rtc" "$(unit_path)" 2>/dev/null
+    echo "Next: ipcam install"
   fi
 }
 
-convert_cameras_yaml() {
-  source_file=$1
-  shown=$2
-  repo=$(build_info repo) || repo=""
-  generator=""
-  [ -n "$repo" ] && [ -f "$repo/scripts/generate-config.mjs" ] && generator="$repo/scripts/generate-config.mjs"
-
-  if [ -z "$generator" ] || ! command -v node >/dev/null 2>&1; then
-    echo "ipcam: $shown is in the source format that you edit by hand." >&2
-    echo "This bundle cannot turn it into a runtime config on its own." >&2
-    echo "" >&2
-    echo "Choose one:" >&2
-    echo "  ipcam discover                       scan the network instead" >&2
-    echo "  ipcam config import <file.tgz>       import a config exported elsewhere" >&2
-    echo "" >&2
-    echo "Or convert it where the sources live, then copy the result:" >&2
-    echo "  node scripts/generate-config.mjs --cameras $shown --out <dir> --static-dir www" >&2
-    exit 1
-  fi
-
-  node "$generator" --target native --cameras "$source_file" --out "$BUNDLE_DIR" --static-dir www \
-    || die "could not turn $shown into a runtime config"
-  [ -f "$CONFIG" ] || die "the conversion wrote no go2rtc.yaml"
-  cp "$source_file" "$BUNDLE_DIR/cameras.yaml"
+config_files() {
+  files="go2rtc.yaml cameras.json"
+  [ -f "$BUNDLE_DIR/cameras.ini" ] && files="$files cameras.ini"
+  printf '%s\n' "$files"
 }
+
 
 cmd_config() {
   action=${1:-show}
@@ -305,13 +282,14 @@ cmd_config() {
       target=${1:-$(pwd)/ipcam-config.tgz}
       case $target in /*) ;; *) target=$(pwd)/$target ;; esac
       [ -f "$CONFIG" ] || die "no go2rtc.yaml in $BUNDLE_DIR"
+      # shellcheck disable=SC2046
       ( cd "$BUNDLE_DIR" && tar -czf "$target" $(config_files) )
       echo "Wrote $target"
       echo "It holds the camera passwords and the viewer password. Send it over a private channel."
       ;;
     import|"")
       source=${1:-}
-      [ -n "$source" ] || die "usage: ipcam config import <file.tgz|cameras.yaml|go2rtc.yaml|url>"
+      [ -n "$source" ] || die "usage: ipcam config import <file.tgz|cameras.ini|go2rtc.yaml|url>"
       scratch=$(mktemp -d)
       original=$source
       case $source in
@@ -322,32 +300,37 @@ cmd_config() {
         *) [ -f "$source" ] || { rm -rf "$scratch"; die "no such file: $source"; } ;;
       esac
 
-      runtime=""
       if tar -tzf "$source" >/dev/null 2>&1; then
         tar -xzf "$source" -C "$scratch"
-        [ -f "$scratch/go2rtc.yaml" ] || { rm -rf "$scratch"; die "$original holds no go2rtc.yaml"; }
-        runtime=$scratch/go2rtc.yaml
-      elif grep -q "^api:" "$source" 2>/dev/null; then
-        runtime=$source
-      elif grep -q "^cameras:" "$source" 2>/dev/null; then
-        convert_cameras_yaml "$source" "$original" "$scratch"
+        if [ -f "$scratch/cameras.ini" ]; then
+          cp "$scratch/cameras.ini" "$BUNDLE_DIR/cameras.ini"
+          rm -rf "$scratch"
+          render_config
+        else
+          [ -f "$scratch/go2rtc.yaml" ] || { rm -rf "$scratch"; die "$original holds no config"; }
+          cp "$scratch/go2rtc.yaml" "$BUNDLE_DIR/go2rtc.yaml"
+          if [ -f "$scratch/cameras.json" ]; then
+            cp "$scratch/cameras.json" "$BUNDLE_DIR/cameras.json"
+            if [ -d "$BUNDLE_DIR/www" ]; then cp "$scratch/cameras.json" "$BUNDLE_DIR/www/cameras.json"; fi
+          fi
+          rm -rf "$scratch"
+        fi
+      elif grep -qE '^[[:space:]]*\[[^]]+\][[:space:]]*$' "$source" 2>/dev/null; then
+        cp "$source" "$BUNDLE_DIR/cameras.ini"
         rm -rf "$scratch"
-        echo "Config installed in $BUNDLE_DIR"
-        if service_is_this_bundle; then "$SELF" restart; else echo "Next: ipcam install"; fi
-        return 0
+        render_config
+      elif grep -q "^api:" "$source" 2>/dev/null; then
+        cp "$source" "$BUNDLE_DIR/go2rtc.yaml"
+        rm -rf "$scratch"
+        [ -f "$BUNDLE_DIR/cameras.json" ] || echo "note: no cameras.json came with it. The page will list no camera until one arrives."
+      elif grep -qE '^(cameras|server):[[:space:]]*$' "$source" 2>/dev/null; then
+        rm -rf "$scratch"
+        die "$original is in the old YAML format. The config is INI now: one [section] per camera. See cameras.ini.example."
       else
         rm -rf "$scratch"
-        die "$original is neither a config archive, a go2rtc.yaml, nor a cameras.yaml"
+        die "$original is neither a config archive, a cameras.ini, nor a go2rtc.yaml"
       fi
 
-      cp "$runtime" "$BUNDLE_DIR/go2rtc.yaml"
-      if [ -f "$scratch/cameras.json" ]; then
-        cp "$scratch/cameras.json" "$BUNDLE_DIR/cameras.json"
-        [ -d "$BUNDLE_DIR/www" ] && cp "$scratch/cameras.json" "$BUNDLE_DIR/www/cameras.json"
-      elif [ ! -f "$BUNDLE_DIR/cameras.json" ]; then
-        echo "note: no cameras.json came with it. The page will list no camera until one arrives."
-      fi
-      rm -rf "$scratch"
       echo "Config installed in $BUNDLE_DIR"
       if service_is_this_bundle; then
         "$SELF" restart
@@ -357,6 +340,7 @@ cmd_config() {
       ;;
     show)
       echo "Config:  $CONFIG"
+      if [ -f "$BUNDLE_DIR/cameras.ini" ]; then echo "Source:  $BUNDLE_DIR/cameras.ini"; fi
       echo "Listen:  $(listen_address)"
       echo "User:    $(viewer_user)"
       echo "Cameras: $(sed -n 's/.*"name": "\([^"]*\)".*/\1/p' "$BUNDLE_DIR/cameras.json" 2>/dev/null | tr '\n' ' ')"
@@ -396,8 +380,15 @@ random_secret() {
   od -An -tx1 -N12 /dev/urandom | tr -d ' \n'
 }
 
-yaml_quote() {
-  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"
+
+service_is_this_bundle() {
+  if [ "$OS" = macos ]; then
+    [ -f "$(plist_path)" ] || return 1
+    grep -q "$BUNDLE_DIR/go2rtc" "$(plist_path)" 2>/dev/null
+  else
+    [ -f "$(unit_path)" ] || return 1
+    grep -q "$BUNDLE_DIR/go2rtc" "$(unit_path)" 2>/dev/null
+  fi
 }
 
 existing_api_value() {
@@ -407,14 +398,39 @@ existing_api_value() {
   printf '%s' "$value"
 }
 
+existing_server_value() {
+  if [ -f "$BUNDLE_DIR/cameras.ini" ]; then
+    value=$(awk -v want="$1" '
+      /^[ \t]*\[server\][ \t]*$/ { in_server = 1; next }
+      /^[ \t]*\[/ { in_server = 0 }
+      in_server {
+        line = $0; sub(/^[ \t]+/, "", line)
+        eq = index(line, "="); if (eq == 0) next
+        key = substr(line, 1, eq - 1); sub(/[ \t]+$/, "", key)
+        if (key == want) { v = substr(line, eq + 1); sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v); print v; exit }
+      }' "$BUNDLE_DIR/cameras.ini")
+    [ -n "$value" ] && { printf '%s' "$value"; return 0; }
+  fi
+  existing_api_value "$1"
+}
+
+render_config() {
+  [ -f "$BUNDLE_DIR/cameras.ini" ] || die "no cameras.ini in $BUNDLE_DIR"
+  [ -f "$BUNDLE_DIR/scripts/config.awk" ] || die "this bundle ships no config.awk. Install a newer release."
+  LC_ALL=C awk -v out="$BUNDLE_DIR" -v static_dir=www -f "$BUNDLE_DIR/scripts/config.awk" "$BUNDLE_DIR/cameras.ini" \
+    || die "cameras.ini has problems. Fix them and run this again."
+  if [ -d "$BUNDLE_DIR/www" ]; then cp "$BUNDLE_DIR/cameras.json" "$BUNDLE_DIR/www/cameras.json"; fi
+  return 0
+}
+
 discover_with_go2rtc() {
   force=$1
   command -v curl >/dev/null 2>&1 || die "curl is not installed"
   [ -x "$BUNDLE_DIR/go2rtc" ] || die "no go2rtc binary in $BUNDLE_DIR"
   [ -n "${ONVIF_USER:-}" ] && [ -n "${ONVIF_PASSWORD:-}" ] ||
     die "set ONVIF_USER and ONVIF_PASSWORD to the camera account, then run this again"
-  if [ -f "$CONFIG" ] && [ "$force" != yes ]; then
-    die "$CONFIG already exists. Pass --force to replace it."
+  if [ -f "$BUNDLE_DIR/cameras.ini" ] && [ "$force" != yes ]; then
+    die "$BUNDLE_DIR/cameras.ini already exists. Pass --force to replace it."
   fi
 
   scratch=$(mktemp -d)
@@ -452,8 +468,7 @@ discover_with_go2rtc() {
 
   user=$(urlencode "$ONVIF_USER")
   password=$(urlencode "$ONVIF_PASSWORD")
-  : > "$scratch/streams"
-  : > "$scratch/manifest"
+  : > "$scratch/cameras"
   : > "$scratch/names"
   found=0
 
@@ -484,14 +499,19 @@ discover_with_go2rtc() {
     done
     printf '%s\n' "$name" >> "$scratch/names"
 
-    printf '  %s.onvif: %s\n' "$name" "$(yaml_quote "$main")" >> "$scratch/streams"
-    entry="    {\"name\": \"$name\", \"label\": \"$label\", \"streams\": {\"onvif\": {\"main\": \"$name.onvif\""
-    if [ -n "$sub" ]; then
-      printf '  %s.onvif.sub: %s\n' "$name" "$(yaml_quote "$sub")" >> "$scratch/streams"
-      entry="$entry, \"sub\": \"$name.onvif.sub\""
-    fi
-    entry="$entry}}}"
-    printf '%s\n' "$entry" >> "$scratch/manifest"
+    main_profile=$(printf '%s' "$main" | sed -n 's/.*subtype=//p')
+    sub_profile=$(printf '%s' "$sub" | sed -n 's/.*subtype=//p')
+    {
+      echo ""
+      echo "[$name]"
+      echo "label = $label"
+      echo "host = ${device%%:*}"
+      echo "username = $ONVIF_USER"
+      echo "password = $ONVIF_PASSWORD"
+      echo "onvif.port = ${device##*:}"
+      if [ -n "$main_profile" ]; then echo "onvif.profile = $main_profile"; fi
+      if [ -n "$sub_profile" ] && [ "$sub_profile" != "$main_profile" ]; then echo "onvif.sub_profile = $sub_profile"; fi
+    } >> "$scratch/cameras"
     echo "  ${device%%:*}  $name  $(printf '%s\n' "$urls" | grep -c .) profile(s)"
     found=$((found + 1))
   done < "$scratch/devices"
@@ -503,70 +523,53 @@ discover_with_go2rtc() {
     die "found no ONVIF camera. Try: ipcam discover --deep"
   fi
 
-  listen=$(existing_api_value listen || printf ':80')
-  viewer=$(existing_api_value username || printf 'viewer')
-  secret=$(existing_api_value password || random_secret)
-
+  listen=$(existing_server_value listen || printf ':80')
+  viewer=$(existing_server_value username || printf 'viewer')
+  secret=$(existing_server_value password || random_secret)
   {
-    echo "streams:"
-    cat "$scratch/streams"
-    echo "api:"
-    echo "  listen: $(yaml_quote "$listen")"
-    echo "  static_dir: www"
-    echo "  username: $(yaml_quote "$viewer")"
-    echo "  password: $(yaml_quote "$secret")"
-    echo "webrtc:"
-    echo "  listen: ':8555'"
-    echo "  ice_servers: []"
-  } > "$BUNDLE_DIR/go2rtc.yaml"
-
-  {
-    echo "{"
-    echo '  "cameras": ['
-    sed '$!s/$/,/' "$scratch/manifest"
-    echo "  ]"
-    echo "}"
-  } > "$BUNDLE_DIR/cameras.json"
-  [ -d "$BUNDLE_DIR/www" ] && cp "$BUNDLE_DIR/cameras.json" "$BUNDLE_DIR/www/cameras.json"
-
+    echo "[server]"
+    echo "listen = $listen"
+    echo "username = $viewer"
+    echo "password = $secret"
+    cat "$scratch/cameras"
+  } > "$BUNDLE_DIR/cameras.ini"
   rm -rf "$scratch"
-  echo "Wrote $BUNDLE_DIR/go2rtc.yaml with $found camera(s)."
+
+  render_config
+  echo "Wrote $BUNDLE_DIR/cameras.ini with $found camera(s). Edit it, then run: ipcam update"
   echo "Viewer login: $viewer / $secret"
 }
 
 discover_with_node() {
+  force=$1
+  shift
   command -v node >/dev/null 2>&1 || die "node is not installed. Drop --deep to scan with go2rtc."
   script="$BUNDLE_DIR/scripts/discover-cameras.mjs"
   [ -f "$script" ] || die "this bundle ships no discovery script. Install a newer release."
-
-  if [ -f "$BUNDLE_DIR/cameras.yaml" ]; then
-    node "$script" --write-runtime "$BUNDLE_DIR" "$@" || die "the scan failed"
-  else
-    node "$script" --write-runtime "$BUNDLE_DIR" --write-config "$BUNDLE_DIR/cameras.yaml" "$@" \
-      || die "the scan failed"
+  if [ -f "$BUNDLE_DIR/cameras.ini" ]; then
+    [ "$force" = yes ] || die "$BUNDLE_DIR/cameras.ini already exists. Pass --force to replace it."
+    rm -f "$BUNDLE_DIR/cameras.ini"
   fi
+  node "$script" --write-config "$BUNDLE_DIR/cameras.ini" "$@" || die "the scan failed"
+  render_config
+  echo "Wrote $BUNDLE_DIR/cameras.ini. Edit it, then run: ipcam update"
 }
 
 cmd_discover() {
   deep=no
   force=no
+  rest=""
   for argument in "$@"; do
     case $argument in
       --deep) deep=yes ;;
       --force) force=yes ;;
-      *) ;;
+      *) rest="$rest $argument" ;;
     esac
   done
 
   if [ "$deep" = yes ]; then
-    set -- "$@"
-    rest=""
-    for argument in "$@"; do
-      [ "$argument" = "--deep" ] && continue
-      rest="$rest $argument"
-    done
     # shellcheck disable=SC2086
-    discover_with_node $rest
+    discover_with_node "$force" $rest
   else
     discover_with_go2rtc "$force"
   fi
@@ -605,13 +608,14 @@ Usage: ipcam <command> [options]
   status               Show the service state, the URL and the link
   logs                 Follow the service log
   url                  Print the address and the viewer user name
-  update [--build]     Rebuild the config from cameras.yaml, then restart
+  update [--build]     Regenerate the config from cameras.ini, then restart.
+                       --build also rebuilds the page. It needs the repository.
   discover [--deep]    Scan for ONVIF cameras with go2rtc and write the config.
                        --deep uses the bundled scanner instead. It needs Node.js,
                        and it also finds cameras that speak no ONVIF.
                        Set ONVIF_USER and ONVIF_PASSWORD first.
   config <action>      show, export <file.tgz>, or
-                       import <file.tgz|cameras.yaml|go2rtc.yaml|url>
+                       import <file.tgz|cameras.ini|go2rtc.yaml|url>
   upgrade              Install the newest release, and keep the config
   link                 Link this command into PATH
   unlink               Remove the link

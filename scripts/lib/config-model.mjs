@@ -61,9 +61,16 @@ function buildOnvif(camera, block, where, streams, entry, errors) {
   if (requireText(user, "username", where, errors) === null) return;
   if (requireText(pass, "password", where, errors) === null) return;
 
+  const base = `onvif://${auth(user, pass)}@${camera.host}:${port}`;
   const main = `${camera.name}.onvif`;
-  streams[main] = `onvif://${auth(user, pass)}@${camera.host}:${port}`;
+  streams[main] = block.profile ? `${base}?subtype=${block.profile}` : base;
   entry.onvif = { main };
+
+  if (block.sub_profile) {
+    const sub = `${camera.name}.onvif.sub`;
+    streams[sub] = `${base}?subtype=${block.sub_profile}`;
+    entry.onvif.sub = sub;
+  }
 }
 
 function buildTapo(camera, block, where, streams, entry, errors) {
@@ -156,4 +163,105 @@ export function buildGo2rtcConfig({ streams, api, candidates }) {
 
 export function manifestJson(manifest) {
   return `${JSON.stringify({ cameras: manifest }, null, 2)}\n`;
+}
+
+const SERVER_KEYS = new Set(["listen", "username", "password", "candidates"]);
+const CAMERA_KEYS = new Set(["label", "host", "username", "password"]);
+const PROTOCOL_KEYS = {
+  rtsp: new Set(["port", "path", "sub_path", "username", "password"]),
+  onvif: new Set(["port", "profile", "sub_profile", "username", "password"]),
+  tapo: new Set(["username", "password"]),
+};
+const ENABLE_WORDS = new Set(["", "on", "yes", "true", "1"]);
+const DISABLE_WORDS = new Set(["off", "no", "false", "0"]);
+
+export function configFromIni(sections, errors) {
+  let server = null;
+  const cameras = [];
+
+  for (const section of sections) {
+    if (section.name === "server") {
+      server = {};
+      for (const [key, { value, line }] of section.entries) {
+        if (!SERVER_KEYS.has(key)) {
+          errors.push(`line ${line}: unknown key "${key}" in [server]`);
+          continue;
+        }
+        if (value === "") {
+          errors.push(`line ${line}: "${key}" has no value`);
+          continue;
+        }
+        server[key] = key === "candidates"
+          ? value.split(",").map((item) => item.trim()).filter(Boolean)
+          : value;
+      }
+      continue;
+    }
+
+    const camera = { name: section.name };
+    const enabled = {};
+    for (const [key, { value, line }] of section.entries) {
+      const dot = key.indexOf(".");
+      if (value === "" && !(dot === -1 && key in PROTOCOL_KEYS)) {
+        errors.push(`line ${line}: "${key}" has no value`);
+        continue;
+      }
+      if (dot === -1) {
+        if (CAMERA_KEYS.has(key)) {
+          camera[key] = value;
+          continue;
+        }
+        if (key in PROTOCOL_KEYS) {
+          if (ENABLE_WORDS.has(value)) enabled[key] = enabled[key] ?? {};
+          else if (DISABLE_WORDS.has(value)) enabled[key] = null;
+          else errors.push(`line ${line}: "${key}" takes on or off, not "${value}"`);
+          continue;
+        }
+        errors.push(`line ${line}: unknown key "${key}" in [${section.name}]`);
+        continue;
+      }
+      const protocol = key.slice(0, dot);
+      const field = key.slice(dot + 1);
+      if (!(protocol in PROTOCOL_KEYS)) {
+        errors.push(`line ${line}: unknown protocol "${protocol}" in key "${key}"`);
+        continue;
+      }
+      if (!PROTOCOL_KEYS[protocol].has(field)) {
+        errors.push(`line ${line}: unknown key "${key}" in [${section.name}]`);
+        continue;
+      }
+      if (enabled[protocol] === null) continue;
+      enabled[protocol] = enabled[protocol] ?? {};
+      enabled[protocol][field] = value;
+    }
+    for (const protocol of PROTOCOLS) {
+      if (enabled[protocol]) camera[protocol] = enabled[protocol];
+    }
+    cameras.push(camera);
+  }
+
+  return { server, cameras };
+}
+
+function yamlQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+export function emitGo2rtcYaml(config) {
+  const lines = ["streams:"];
+  for (const [name, url] of Object.entries(config.streams)) {
+    lines.push(`  ${name}: ${yamlQuote(url)}`);
+  }
+  lines.push("api:");
+  for (const [key, value] of Object.entries(config.api)) {
+    lines.push(`  ${key}: ${yamlQuote(value)}`);
+  }
+  lines.push("webrtc:");
+  lines.push(`  listen: ${yamlQuote(config.webrtc.listen)}`);
+  lines.push("  ice_servers: []");
+  if (config.webrtc.candidates && config.webrtc.candidates.length > 0) {
+    lines.push("  candidates:");
+    for (const candidate of config.webrtc.candidates) lines.push(`    - ${yamlQuote(candidate)}`);
+  }
+  return `${lines.join("\n")}\n`;
 }

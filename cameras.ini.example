@@ -1,0 +1,30 @@
+[server]
+listen = :80
+username = viewer
+password = choose_a_viewer_password
+
+[hallway]
+label = Hallway
+host = 192.168.1.54
+username = your_camera_account
+password = your_camera_password
+rtsp.path = /stream1
+rtsp.sub_path = /stream2
+onvif.port = 2020
+
+[living_room]
+host = 192.168.1.55
+username = your_camera_account
+password = your_camera_password
+rtsp.port = 554
+rtsp.path = /stream1
+rtsp.sub_path = /stream2
+
+[house_front]
+host = 192.168.1.56
+username = your_camera_account
+password = your_camera_password
+rtsp.path = /stream1
+rtsp.sub_path = /stream2
+tapo.username = your_tplink_account_email
+tapo.password = your_tplink_cloud_password

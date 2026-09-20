@@ -2,6 +2,7 @@
 **/dist
 frontend/public/cameras.json
 go2rtc
+cameras.ini
 cameras.yaml
 cameras.yaml.bak
 .env

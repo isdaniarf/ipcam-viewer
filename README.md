@@ -17,11 +17,12 @@ It plays each stream with WebRTC. It falls back to MSE, and then to HLS.
 - A password protects the page and the streams.
 - An `ipcam` command controls the service from anywhere in your shell.
 - A one-line install from a GitHub release. The config stays on your machines.
+- One plain INI config file, readable by the installed bundle with no Node.js.
 
 ## Requirements
 
 - macOS or Linux, on the machine that runs the viewer.
-- Node.js 22 and git, for the source install. The other two ways need neither.
+- Node.js 22 and git, for the source install and for `ipcam discover --deep`. Nothing else needs them.
 - Cameras that speak RTSP, ONVIF or Tapo, on the same network.
 - An ONVIF camera account, when you let `ipcam discover` find the cameras for you.
 
@@ -36,12 +37,13 @@ these three ways suits the machine.
 | Way | It needs | Choose it when |
 |-----|----------|----------------|
 | [From source](#install-from-source) | Node.js 22 and git | You set up your cameras for the first time, or you change them |
-| [From a release](#install-from-a-release) | `curl` only | You want one command. It can scan for your cameras by itself |
+| [From a release](#install-from-a-release) | `curl` only | You want one command. Then scan, or write `cameras.ini` by hand |
 | [From a bundle](#install-from-a-bundle) | Nothing on the target | The target has no internet, or another processor family |
 
 The config is what separates them. It holds your camera passwords, so it never ships in a release.
-You get one in three ways: write `cameras.yaml` yourself, let `ipcam discover` scan your network, or
-copy an existing config with `ipcam config export` and `ipcam config import`.
+You get one in three ways: write `cameras.ini` yourself, let `ipcam discover` scan your network, or
+copy an existing config with `ipcam config export` and `ipcam config import`. Every way works on every
+install, with no Node.js.
 
 ### Install from source
 
@@ -55,16 +57,16 @@ cd ipcam-viewer
 ```
 
 2. Copy the template and add your cameras. See [Camera configuration](#camera-configuration).
-   Or let a scan write the file for you. See [Write cameras.yaml from a scan](#write-camerasyaml-from-a-scan).
+   Or let a scan write the file for you. See [Write cameras.ini from a scan](#write-camerasini-from-a-scan).
 
 ```bash
-cp cameras.yaml.example cameras.yaml
+cp cameras.ini.example cameras.ini
 ```
 
 3. Install the build dependencies once.
 
 ```bash
-cd scripts && npm install && cd ../frontend && npm install && cd ..
+cd frontend && npm install && cd ..
 ```
 
 4. Build the bundle. The script builds the page, downloads go2rtc for this machine, and writes the config.
@@ -79,7 +81,7 @@ node scripts/bundle.mjs
 ./bundle/ipcam install
 ```
 
-6. Open the address that the installer prints. Log in with the user and the password from `server:` in `cameras.yaml`.
+6. Open the address that the installer prints. Log in with the user and the password from `[server]` in `cameras.ini`.
 
 The bundle is self-contained. Keep the `bundle/` directory in place after the install, because the
 service runs go2rtc from there.
@@ -95,10 +97,17 @@ curl -fsSL https://raw.githubusercontent.com/isdaniarf/ipcam-viewer/main/install
 It detects the platform, downloads the release and the matching go2rtc binary, installs into
 `~/.local/share/ipcam-viewer`, and links the `ipcam` command.
 
-It brings no config, so give it one. Either scan for your cameras:
+It brings no config, so give it one in any of three ways. Scan for your cameras:
 
 ```bash
 ONVIF_USER=admin ONVIF_PASSWORD=secret ipcam discover
+ipcam install
+```
+
+Or write `cameras.ini` by hand, as shown in [Camera configuration](#camera-configuration), and import it:
+
+```bash
+ipcam config import cameras.ini
 ipcam install
 ```
 
@@ -116,8 +125,7 @@ for the grid tile and the second one as the low resolution stream. It prints the
 generated. Pass `--force` to replace a config that already exists.
 
 Add `--deep` for a slower scan with the bundled scanner. It needs Node.js 22, and it also finds
-cameras that speak no ONVIF, reports the vendor and the open ports, and writes a `cameras.yaml` that
-you can edit.
+cameras that speak no ONVIF, and reports the vendor and the open ports.
 
 `ipcam upgrade` installs a newer release later and keeps the config.
 
@@ -187,19 +195,19 @@ The command then works from anywhere.
 | `ipcam status` | Show the state, the pid, the URL and the link |
 | `ipcam logs` | Follow the service log |
 | `ipcam url` | Print the address and the viewer user name |
-| `ipcam update [--build]` | Rebuild the config from `cameras.yaml`, then restart |
+| `ipcam update [--build]` | Regenerate the config from `cameras.ini`, then restart |
 | `ipcam discover [--deep]` | Scan the network and write the config for the cameras it finds |
-| `ipcam config show\|export\|import` | Show, export or import the config. Import takes a `.tgz`, a `cameras.yaml` or a `go2rtc.yaml` |
+| `ipcam config show\|export\|import` | Show, export or import the config. Import takes a `.tgz`, a `cameras.ini` or a `go2rtc.yaml` |
 | `ipcam upgrade` | Install the newest release, and keep the config |
 | `ipcam uninstall` | Stop the service, remove it, and remove the link |
 | `ipcam version` | Show the bundle and go2rtc versions |
 
-`ipcam update` needs the repository and Node.js. It works on the machine that built the bundle.
-On another machine, build a new bundle and copy it again.
+`ipcam update` reads the `cameras.ini` next to the installed bundle and needs nothing else. Pass
+`--build` to rebuild the web page as well, which needs the repository and Node.js.
 
 ### Change the cameras
 
-Edit `cameras.yaml`, then apply the change.
+Edit `cameras.ini`, then apply the change.
 
 ```bash
 ipcam update
@@ -207,71 +215,78 @@ ipcam update
 
 ## Camera configuration
 
-The file `cameras.yaml` holds the viewer password, your cameras and their passwords. Git ignores this file.
+The file `cameras.ini` holds the viewer password, your cameras and their passwords. Git ignores this file.
+It is plain INI: one `[section]` per camera, and `key = value` lines. There is no indentation and no
+quoting. A value runs from the first `=` to the end of the line, with surrounding spaces removed, so a
+password that contains `#`, `=`, quotes or spaces needs nothing special.
 
-```yaml
-server:
-  listen: ":80"
-  username: viewer
-  password: choose_a_viewer_password
+```ini
+[server]
+listen = :80
+username = viewer
+password = choose_a_viewer_password
 
-cameras:
-  - name: hallway
-    label: Hallway
-    host: 192.168.1.54
-    username: camera_account
-    password: camera_password
-    rtsp:
-      port: 554
-      path: /stream1
-      sub_path: /stream2
-    onvif:
-      port: 2020
-    tapo:
-      username: tplink_account_email
-      password: tplink_cloud_password
+[hallway]
+label = Hallway
+host = 192.168.1.54
+username = camera_account
+password = camera_password
+rtsp.path = /stream1
+rtsp.sub_path = /stream2
+onvif.port = 2020
+tapo.username = tplink_account_email
+tapo.password = tplink_cloud_password
 ```
 
-### Server fields
+A line that starts with `;` or `#` is a comment. The section name is the camera name: letters,
+digits, `_` and `-` only. A key that the viewer does not know stops the generator with the line
+number, so a typo cannot pass silently.
 
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
+### Server keys
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
 | `password` | yes | — | The viewer password. It protects the page, the camera list and the streams. |
 | `username` | no | `viewer` | The viewer user name. |
 | `listen` | no | `:80` | The address and port of the web server. |
-| `candidates` | no | — | A list of host IP addresses for WebRTC. See [Remote access](#remote-access). |
+| `candidates` | no | — | Host IP addresses for WebRTC, comma separated. See [Remote access](#remote-access). |
 
-### Camera fields
+### Camera keys
 
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `name` | yes | — | The stream name. Use letters, digits, `_` and `-` only. It must be unique. |
-| `label` | no | From `name` | The title on the tile. |
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
 | `host` | yes | — | The IP address or the hostname of the camera. |
-| `username` | for RTSP and ONVIF | — | The camera account. Each block can override it. |
-| `password` | for RTSP and ONVIF | — | The camera password. Each block can override it. |
+| `label` | no | From the name | The title on the tile. |
+| `username` | for RTSP and ONVIF | — | The camera account. A protocol key can override it. |
+| `password` | for RTSP and ONVIF | — | The camera password. A protocol key can override it. |
 
-### Protocol fields
+### Protocol keys
 
-Each camera declares one block for each protocol that it supports. A block turns that protocol on.
-The generator creates no stream for an absent block.
+A camera speaks a protocol when any key with that prefix appears. `onvif = on` turns a protocol on
+with all defaults, and `onvif = off` turns it off even when its keys are present.
 
-| Block | Field | Required | Default | Description |
-|-------|-------|----------|---------|-------------|
-| `rtsp` | `path` | yes | — | The path of the main stream. |
-| `rtsp` | `sub_path` | no | — | The path of the low resolution stream. The grid plays it. |
-| `rtsp` | `port` | no | `554` | The RTSP port. |
-| `onvif` | `port` | no | `80` | The ONVIF port. Tapo cameras use `2020`. |
-| `tapo` | `password` | yes | — | The TP-Link cloud password. |
-| `tapo` | `username` | no | — | The TP-Link account email address. |
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `rtsp.path` | yes, for RTSP | — | The path of the main stream. |
+| `rtsp.sub_path` | no | — | The path of the low resolution stream. The grid plays it. |
+| `rtsp.port` | no | `554` | The RTSP port. |
+| `rtsp.username`, `rtsp.password` | no | The camera account | An account for RTSP only. |
+| `onvif.port` | no | `80` | The ONVIF port. Tapo cameras use `2020`. |
+| `onvif.profile` | no | The first profile | The ONVIF profile of the main stream. |
+| `onvif.sub_profile` | no | — | The ONVIF profile of the low resolution stream. |
+| `onvif.username`, `onvif.password` | no | The camera account | An account for ONVIF only. |
+| `tapo.password` | yes, for Tapo | — | The TP-Link cloud password. |
+| `tapo.username` | no | — | The TP-Link account email address. |
 
 The Tapo password is **not** the RTSP password. The Tapo protocol uses your TP-Link cloud account.
 The RTSP protocol uses the camera account from the Tapo app.
 
-A `sub_path` gives the largest performance gain. Most Tapo cameras serve `/stream2` at a low
-resolution. Delete the line if your camera returns an error for that path.
+A `rtsp.sub_path` or `onvif.sub_profile` gives the largest performance gain. Most Tapo cameras serve
+`/stream2` at a low resolution. `ipcam discover` finds the profiles for you.
 
-The generator checks the file. It reports every problem, and then it writes no file.
+The generator checks the file. It reports every problem, and then it writes no file. Two readers exist,
+one in JavaScript for the source install and one in awk for the installed bundle, and a test in CI
+proves that they produce the same output for the same file.
 
 ## Find cameras on the LAN
 
@@ -285,13 +300,13 @@ node scripts/discover-cameras.mjs --subnet 192.168.1.0/24 --json
 ONVIF_USER=admin ONVIF_PASSWORD=secret node scripts/discover-cameras.mjs
 ```
 
-### Write cameras.yaml from a scan
+### Write cameras.ini from a scan
 
 With the camera account it can also write the config for you:
 
 ```bash
 ONVIF_USER=admin ONVIF_PASSWORD=secret \
-  node scripts/discover-cameras.mjs --write-config cameras.yaml
+  node scripts/discover-cameras.mjs --write-config cameras.ini
 ```
 
 It asks each camera over ONVIF for its stream profiles, and it takes the exact RTSP port and path
@@ -323,7 +338,7 @@ Run it on the host, not in Docker. Docker on macOS blocks multicast and hides th
 | `--skip-sweep` | Sweep no ports. Inspect only the hosts that answer the probe. |
 | `--offline` | Look up no MAC vendor online. |
 | `--json` | Print the result as JSON. |
-| `--write-config <file>` | Write a `cameras.yaml` for the cameras that were found. `-` means stdout. |
+| `--write-config <file>` | Write a `cameras.ini` for the cameras that were found. `-` means stdout. |
 | `--write-runtime <dir>` | Write `go2rtc.yaml` and `cameras.json` straight into a directory. |
 | `--force` | Let `--write-runtime` replace an existing `go2rtc.yaml`. |
 
@@ -335,14 +350,14 @@ for WebRTC as soon as Tailscale is connected.
 
 Run `ipcam url` to see the address and the viewer user name of the host.
 
-Set `server.candidates` when you want a fixed list instead, for example on a host with many interfaces.
+Set `candidates` under `[server]` when you want a fixed list instead, for example on a host with many interfaces.
 Do not use Tailscale Funnel. Funnel publishes the viewer to the open internet.
 
 ## Ports
 
 | Port | Purpose |
 |------|---------|
-| 80, or `server.listen` | The page, the camera list, the WebSocket and the go2rtc API |
+| 80, or `listen` under `[server]` | The page, the camera list, the WebSocket and the go2rtc API |
 | 8555 TCP and UDP | WebRTC media |
 
 The go2rtc API shares the web port. The viewer password protects every path on it.
@@ -350,7 +365,7 @@ Requests from the host itself skip the password. That is go2rtc behaviour.
 
 ## Where the passwords are
 
-- `cameras.yaml` holds the viewer password and the camera passwords in plain text.
+- `cameras.ini` holds the viewer password and the camera passwords in plain text.
 - `bundle/go2rtc.yaml` holds the same values, because go2rtc reads them from there.
 - The browser receives `cameras.json`. This file holds camera names and stream names only.
 - The holder of the viewer password can read the camera passwords through the go2rtc API.
@@ -362,7 +377,7 @@ Docker is the alternative when you want no service on the host. It runs go2rtc b
 In this layout the go2rtc API stays inside the Docker network, and nginx proxies the stream paths only.
 
 ```bash
-cp cameras.yaml.example cameras.yaml
+cp cameras.ini.example cameras.ini
 cp .env.example .env
 docker compose up --build
 ```
@@ -402,7 +417,7 @@ a different address. Requests from the host skip the password, so the dev server
 | Control the service | `ipcam [start\|stop\|restart\|status\|logs\|url\|update\|uninstall]` |
 | Generate the configuration only | `node scripts/generate-config.mjs [--target native\|docker]` |
 | Find cameras on the LAN | `node scripts/discover-cameras.mjs [--help]` |
-| Write cameras.yaml from a scan | `node scripts/discover-cameras.mjs --write-config cameras.yaml` |
+| Write cameras.ini from a scan | `node scripts/discover-cameras.mjs --write-config cameras.ini` |
 | Start the dev server | `cd frontend && npm run dev` |
 | Build the frontend | `cd frontend && npm run build` |
 | Check the code style | `cd frontend && npm run lint` |
@@ -411,11 +426,11 @@ a different address. Requests from the host skip the password, so the dev server
 ## Troubleshooting
 
 **The browser asks for a password again and again.**
-Check `server.username` and `server.password` in `cameras.yaml`, then run `ipcam update`.
+Check `username` and `password` under `[server]` in `cameras.ini`, then run `ipcam update`.
 
 **The service does not start.**
 Run `ipcam logs`. A common cause is another program on port 80. A port below 1024 can also need root
-on some systems. Change `server.listen` to a high port, for example `":8080"`, then run `ipcam update`.
+on some systems. Set `listen = :8080` under `[server]` in `cameras.ini`, then run `ipcam update`.
 
 **A tile stays on "Connecting" or shows "Offline".**
 Check that the camera answers on its RTSP port. Check the `path` value.
@@ -424,25 +439,27 @@ Check that the camera answers on its RTSP port. Check the `path` value.
 Run `ipcam update` and read the generator output.
 
 **The tile is black, and the tile shows "Live".**
-The substream path is wrong for that camera. Delete `sub_path` for the camera.
+The substream path is wrong for that camera. Delete its `rtsp.sub_path` line.
 
 **Video starts on the LAN but not over Tailscale.**
-Check that Tailscale is connected on the host. Or set `server.candidates` to the LAN address and the
-Tailscale address of the host.
+Check that Tailscale is connected on the host. Or set `candidates` under `[server]` to the LAN address and the
+Tailscale address of the host, under `[server]`.
 
 ## Project layout
 
 | Path | Content |
 |------|---------|
 | `frontend/` | The React client. See [frontend/README.md](frontend/README.md). |
-| `scripts/generate-config.mjs` | It reads `cameras.yaml`. It writes `go2rtc.yaml` and `cameras.json`. |
+| `scripts/generate-config.mjs` | It reads `cameras.ini`. It writes `go2rtc.yaml` and `cameras.json`. |
 | `scripts/bundle.mjs` | It builds the self-contained bundle for a platform. |
 | `scripts/discover-cameras.mjs` | It finds cameras on the LAN with WS-Discovery and a port sweep. |
-| `scripts/lib/config-model.mjs` | The shared config logic. No dependency, used by both scripts. |
+| `scripts/lib/` | The INI reader and the shared config logic. No dependency. |
+| `scripts/native/config.awk` | The same reader in awk. The installed bundle uses it, so it needs no Node.js. |
+| `scripts/test-config-parity.mjs` | It proves the awk and JavaScript readers agree. CI runs it. |
 | `scripts/native/` | The `ipcam` command, and the launchd and systemd templates for the bundle. |
 | `install.sh` | The `curl \| sh` entry point. It installs a published release. |
 | `.github/workflows/release.yml` | It builds and publishes a release on a `v*` tag. |
 | `bundle/` | The generated bundle. Git ignores this directory. |
 | `nginx/nginx.conf` | The nginx config for the Docker layout. |
 | `docker-compose.yml` | The Docker layout: `config-gen`, `go2rtc` and `web`. |
-| `cameras.yaml` | Your passwords and cameras. Git ignores this file. |
+| `cameras.ini` | Your passwords and cameras. Git ignores this file. |
