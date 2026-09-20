@@ -310,7 +310,7 @@ ONVIF_USER=admin ONVIF_PASSWORD=secret \
 ```
 
 It asks each camera over ONVIF for its stream profiles, and it takes the exact RTSP port and path
-from the answer. The largest H264 profile becomes `path`, and the smallest becomes `sub_path`. When a
+from the answer. The largest H264 profile becomes `rtsp.path`, and the smallest becomes `rtsp.sub_path`. When a
 camera speaks no ONVIF, it tries the common RTSP paths with the same account instead.
 
 It never overwrites an existing file. Use `-` to print the config instead of writing it.
@@ -319,8 +319,8 @@ Check the result before you use it:
 
 - The names come from the camera model, such as `tapo_c210`, unless you gave the camera a name in its
   own app. Rename them to the room, for example `hallway`.
-- The viewer password under `server:` is random. Change it if you want your own.
-- A Tapo block is never written, because the TP-Link cloud password is not on the network.
+- The viewer password under `[server]` is random. Change it if you want your own.
+- No `tapo.password` is written, because the TP-Link cloud password is not on the network.
 - Without `ONVIF_USER` and `ONVIF_PASSWORD` it writes placeholders for the camera account, and it
   cannot read the stream path from a camera that needs a login.
 
