@@ -187,7 +187,9 @@ do_unlink() {
 
 build_info() {
   [ -f "$BUNDLE_DIR/build-info" ] || return 1
-  sed -n "s/^$1=//p" "$BUNDLE_DIR/build-info" | head -1
+  value=$(sed -n "s/^$1=//p" "$BUNDLE_DIR/build-info" | head -1)
+  [ -n "$value" ] || return 1
+  printf '%s\n' "$value"
 }
 
 cmd_install() {
