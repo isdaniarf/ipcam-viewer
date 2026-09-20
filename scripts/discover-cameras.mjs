@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { existsSync, writeFileSync } from "node:fs";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createSocket } from "node:dgram";
 import { request as httpRequest } from "node:http";
@@ -59,6 +60,8 @@ const BRAND_PATTERNS = [
 const SOAP_NAMESPACES =
   'xmlns:s="http://www.w3.org/2003/05/soap-envelope" ' +
   'xmlns:tds="http://www.onvif.org/ver10/device/wsdl" ' +
+  'xmlns:trt="http://www.onvif.org/ver10/media/wsdl" ' +
+  'xmlns:tt="http://www.onvif.org/ver10/schema" ' +
   'xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd" ' +
   'xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"';
 const PASSWORD_DIGEST =
@@ -82,12 +85,17 @@ Options:
   --skip-sweep         Sweep no ports. Inspect only the hosts that answer the probe.
   --offline            Look up no MAC vendor online.
   --json               Print the result as JSON.
+  --write-config <file>
+                       Write a cameras.yaml for the cameras that were found.
+                       Use "-" for stdout. It never overwrites an existing file.
   --help               Show this text.
 
 Environment:
   ONVIF_USER, ONVIF_PASSWORD
       Optional. The script uses them for GetDeviceInformation on cameras that
       reject the anonymous call. Tapo cameras need them to show the model.
+      With --write-config it also reads the stream paths over ONVIF, tries
+      authenticated RTSP, and writes the account into the file.
 `;
 
 function fail(message) {
@@ -109,6 +117,7 @@ function readOptions() {
         "skip-sweep": { type: "boolean" },
         offline: { type: "boolean" },
         json: { type: "boolean" },
+        "write-config": { type: "string" },
         help: { type: "boolean" },
       },
     });
@@ -154,6 +163,7 @@ function readOptions() {
     skipSweep: values["skip-sweep"] === true,
     offline: values.offline === true,
     json: values.json === true,
+    writeConfig: values["write-config"] ?? null,
     credentials: user ? { user, password } : null,
   };
 }
@@ -301,6 +311,19 @@ function tagBlock(xml, tag) {
     xml,
   );
   return match ? match[1] : "";
+}
+
+function tagBlocks(xml, tag) {
+  const pattern = new RegExp(
+    `<(?:[\\w.-]+:)?${tag}((?:\\s[^>]*)?)>([\\s\\S]*?)</(?:[\\w.-]+:)?${tag}>`,
+    "g",
+  );
+  return [...xml.matchAll(pattern)].map((match) => ({ attrs: match[1], body: match[2] }));
+}
+
+function attribute(attrs, name) {
+  const match = new RegExp(`${name}="([^"]*)"`).exec(attrs ?? "");
+  return match ? match[1] : null;
 }
 
 function safeDecode(text) {
@@ -499,17 +522,18 @@ async function probeOnvif(url, credentials, timeout, trusted) {
   if (!isSoap && !(trusted && res.status === 401)) return null;
   const empty = { manufacturer: null, model: null, firmware: null, serial: null, hardwareId: null };
   const info = parseDeviceInformation(res.body);
-  if (info) return { url, auth: "open", credentialsAccepted: null, ...info };
+  if (info) return { url, auth: "open", credentialsAccepted: null, timeOffset: 0, ...info };
   const denied =
     res.status === 401 ||
     /NotAuthorized|FailedAuthentication|Unauthorized|not authorized|authentication/i.test(res.body);
   if (!denied) {
     const reason = tagText(res.body, "Text") || `HTTP ${res.status}`;
-    return { url, auth: "unknown", credentialsAccepted: null, ...empty, error: reason };
+    return { url, auth: "unknown", credentialsAccepted: null, timeOffset: 0, ...empty, error: reason };
   }
-  const result = { url, auth: "required", credentialsAccepted: null, ...empty };
+  const result = { url, auth: "required", credentialsAccepted: null, timeOffset: 0, ...empty };
   if (!credentials) return result;
   const offset = await deviceTimeOffset(url, timeout);
+  result.timeOffset = offset;
   const authed = await soapCall(
     url,
     "<tds:GetDeviceInformation/>",
@@ -519,6 +543,85 @@ async function probeOnvif(url, credentials, timeout, trusted) {
   const authedInfo = authed ? parseDeviceInformation(authed.body) : null;
   if (!authedInfo) return { ...result, credentialsAccepted: false };
   return { ...result, credentialsAccepted: true, ...authedInfo };
+}
+
+async function mediaServiceUrl(deviceUrl, credentials, offset, timeout) {
+  const header = credentials ? securityHeader(credentials, offset) : "";
+  const res = await soapCall(
+    deviceUrl,
+    "<tds:GetCapabilities><tds:Category>Media</tds:Category></tds:GetCapabilities>",
+    header,
+    timeout,
+  );
+  if (!res || res.status !== 200) return deviceUrl;
+  const media = tagBlock(res.body, "Media");
+  const xaddr = media ? tagText(media, "XAddr") : "";
+  return xaddr || deviceUrl;
+}
+
+function parseProfile(profile) {
+  const token = attribute(profile.attrs, "token");
+  if (!token) return null;
+  const encoder = tagBlock(profile.body, "VideoEncoderConfiguration");
+  const resolution = encoder ? tagBlock(encoder, "Resolution") : "";
+  const width = Number(resolution ? tagText(resolution, "Width") : 0);
+  const height = Number(resolution ? tagText(resolution, "Height") : 0);
+  return {
+    token,
+    name: tagText(profile.body, "Name") || token,
+    encoding: (encoder ? tagText(encoder, "Encoding") : "") || null,
+    width: Number.isFinite(width) ? width : 0,
+    height: Number.isFinite(height) ? height : 0,
+  };
+}
+
+async function fetchProfiles(mediaUrl, credentials, offset, timeout) {
+  const header = credentials ? securityHeader(credentials, offset) : "";
+  const res = await soapCall(mediaUrl, "<trt:GetProfiles/>", header, timeout);
+  if (!res || res.status !== 200) return [];
+  return tagBlocks(res.body, "Profiles")
+    .map(parseProfile)
+    .filter((profile) => profile !== null);
+}
+
+async function fetchStreamUri(mediaUrl, token, credentials, offset, timeout) {
+  const header = credentials ? securityHeader(credentials, offset) : "";
+  const body =
+    "<trt:GetStreamUri><trt:StreamSetup><tt:Stream>RTP-Unicast</tt:Stream>" +
+    "<tt:Transport><tt:Protocol>RTSP</tt:Protocol></tt:Transport></trt:StreamSetup>" +
+    `<trt:ProfileToken>${escapeXml(token)}</trt:ProfileToken></trt:GetStreamUri>`;
+  const res = await soapCall(mediaUrl, body, header, timeout);
+  if (!res || res.status !== 200) return null;
+  const uri = tagText(res.body, "Uri");
+  if (!uri) return null;
+  try {
+    const parsed = new URL(uri);
+    return {
+      uri,
+      port: Number(parsed.port) || 554,
+      path: `${parsed.pathname}${parsed.search}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function probeStreams(deviceUrl, credentials, offset, timeout) {
+  const mediaUrl = await mediaServiceUrl(deviceUrl, credentials, offset, timeout);
+  const profiles = await fetchProfiles(mediaUrl, credentials, offset, timeout);
+  const video = profiles.filter((profile) => /h\.?26[45]/i.test(profile.encoding ?? ""));
+  const usable = video.length > 0 ? video : profiles;
+  if (usable.length === 0) return null;
+
+  const ranked = [...usable].sort((a, b) => b.width * b.height - a.width * a.height);
+  const wanted = ranked.length > 1 ? [ranked[0], ranked[ranked.length - 1]] : [ranked[0]];
+  const streams = [];
+  for (const profile of wanted) {
+    const stream = await fetchStreamUri(mediaUrl, profile.token, credentials, offset, timeout);
+    if (stream) streams.push({ ...profile, ...stream });
+  }
+  if (streams.length === 0) return null;
+  return { mediaUrl, profiles: usable, main: streams[0], sub: streams[1] ?? null };
 }
 
 function pickXaddr(ip, xaddrs) {
@@ -553,7 +656,32 @@ function parseRtspResponse(text) {
   return { status: Number(match[1]), headers };
 }
 
-function rtspRequest(host, port, method, path, timeout) {
+function authorizationHeader(challenge, method, uri, credentials) {
+  if (!challenge || !credentials) return null;
+  if (/^basic/i.test(challenge)) {
+    const token = Buffer.from(`${credentials.user}:${credentials.password}`).toString("base64");
+    return `Basic ${token}`;
+  }
+  if (!/^digest/i.test(challenge)) return null;
+  const field = (name) => {
+    const match = new RegExp(`${name}="([^"]*)"`, "i").exec(challenge);
+    return match ? match[1] : null;
+  };
+  const realm = field("realm");
+  const nonce = field("nonce");
+  if (realm === null || nonce === null) return null;
+  const md5 = (text) => createHash("md5").update(text).digest("hex");
+  const ha1 = md5(`${credentials.user}:${realm}:${credentials.password}`);
+  const ha2 = md5(`${method}:${uri}`);
+  const response = md5(`${ha1}:${nonce}:${ha2}`);
+  const opaque = field("opaque");
+  return (
+    `Digest username="${credentials.user}", realm="${realm}", nonce="${nonce}", ` +
+    `uri="${uri}", response="${response}"${opaque ? `, opaque="${opaque}"` : ""}`
+  );
+}
+
+function rtspRequest(host, port, method, path, timeout, authorization) {
   return new Promise((resolve) => {
     const socket = connect({ host, port });
     let data = "";
@@ -570,7 +698,9 @@ function rtspRequest(host, port, method, path, timeout) {
     socket.once("connect", () => {
       socket.write(
         `${method} rtsp://${host}:${port}${path} RTSP/1.0\r\nCSeq: 1\r\n` +
-          "User-Agent: ipcam-viewer-discover\r\nAccept: application/sdp\r\n\r\n",
+          "User-Agent: ipcam-viewer-discover\r\nAccept: application/sdp\r\n" +
+          (authorization ? `Authorization: ${authorization}\r\n` : "") +
+          "\r\n",
       );
     });
     socket.on("data", (chunk) => {
@@ -580,9 +710,20 @@ function rtspRequest(host, port, method, path, timeout) {
   });
 }
 
-async function probeRtsp(host, port, timeout) {
+async function probeRtsp(host, port, timeout, credentials) {
   const options = await rtspRequest(host, port, "OPTIONS", "/", timeout);
-  if (!options) return { port, reachable: false, server: null, auth: "unknown", realm: null, openPath: null };
+  if (!options) {
+    return {
+      port,
+      reachable: false,
+      server: null,
+      auth: "unknown",
+      realm: null,
+      openPath: null,
+      authedPath: null,
+      credentialsAccepted: null,
+    };
+  }
   const result = {
     port,
     reachable: true,
@@ -590,24 +731,38 @@ async function probeRtsp(host, port, timeout) {
     auth: "unknown",
     realm: null,
     openPath: null,
+    authedPath: null,
+    credentialsAccepted: null,
   };
+  let challenge = null;
   if (options.status === 401) {
     result.auth = "required";
-    result.realm = realmOf(options.headers["www-authenticate"]);
-    return result;
+    challenge = options.headers["www-authenticate"] ?? null;
+    result.realm = realmOf(challenge);
   }
+
   for (const path of RTSP_PATHS) {
-    const res = await rtspRequest(host, port, "DESCRIBE", path, timeout);
+    const uri = `rtsp://${host}:${port}${path}`;
+    const header = challenge ? authorizationHeader(challenge, "DESCRIBE", uri, credentials) : null;
+    const res = await rtspRequest(host, port, "DESCRIBE", path, timeout, header);
     if (!res) continue;
     if (res.headers.server && !result.server) result.server = res.headers.server;
     if (res.status === 401) {
       result.auth = "required";
-      result.realm = realmOf(res.headers["www-authenticate"]);
-      return result;
+      challenge = res.headers["www-authenticate"] ?? challenge;
+      result.realm = realmOf(challenge) ?? result.realm;
+      if (credentials && header) result.credentialsAccepted = false;
+      if (!credentials) return result;
+      continue;
     }
     if (res.status === 200) {
-      result.auth = "open";
-      result.openPath = path;
+      if (header) {
+        result.authedPath = path;
+        result.credentialsAccepted = true;
+      } else {
+        result.auth = result.auth === "required" ? result.auth : "open";
+        result.openPath = path;
+      }
       return result;
     }
   }
@@ -757,6 +912,7 @@ async function inspectHost(ip, openPorts, discovery, options) {
       ? { xaddrs: discovery.xaddrs, types: discovery.types, scopes: parseScopes(discovery.scopes) }
       : null,
     onvif: null,
+    streams: null,
     rtsp: [],
     http: [],
   };
@@ -776,8 +932,17 @@ async function inspectHost(ip, openPorts, discovery, options) {
     if (host.onvif) break;
   }
 
+  if (host.onvif && (host.onvif.auth === "open" || host.onvif.credentialsAccepted)) {
+    host.streams = await probeStreams(
+      host.onvif.url,
+      options.credentials,
+      host.onvif.timeOffset ?? 0,
+      options.timeout,
+    );
+  }
+
   for (const port of RTSP_PORTS) {
-    if (openPorts.has(port)) host.rtsp.push(await probeRtsp(ip, port, options.timeout));
+    if (openPorts.has(port)) host.rtsp.push(await probeRtsp(ip, port, options.timeout, options.credentials));
   }
   for (const port of HTTP_PORTS) {
     if (!openPorts.has(port)) continue;
@@ -801,6 +966,164 @@ function authSummary(host) {
     rtsp: rtsp ? rtsp.auth : null,
     web: web ? web.auth : null,
   };
+}
+
+const YAML_RESERVED = new Set([
+  "true", "false", "null", "yes", "no", "on", "off", "y", "n", "~",
+]);
+
+function yamlScalar(value) {
+  if (typeof value === "number") return String(value);
+  const text = String(value);
+  const startsSafely = /^[A-Za-z0-9_/.]/.test(text);
+  const hasIndicator = /:\s|\s#|[\x00-\x1f\x7f]/.test(text);
+  const padded = text !== text.trim();
+  const looksNumeric = /^[-+]?[0-9]*\.?[0-9]+$/.test(text);
+  const safe =
+    text.length > 0 &&
+    startsSafely &&
+    !hasIndicator &&
+    !padded &&
+    !looksNumeric &&
+    !YAML_RESERVED.has(text.toLowerCase());
+  return safe ? text : `'${text.replace(/'/g, "''")}'`;
+}
+
+function slug(text) {
+  const cleaned = String(text ?? "")
+    .normalize("NFKD")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+  return cleaned.slice(0, 40);
+}
+
+function userSetName(host) {
+  const scopes = host.discovery?.scopes;
+  const name = scopes?.name[0];
+  if (!name) return null;
+  const hardware = scopes.hardware[0] ?? "";
+  const model = host.onvif?.model ?? "";
+  const same = (other) => other && slug(other) === slug(name);
+  if (same(hardware) || same(model)) return null;
+  return name;
+}
+
+function cameraName(host, used) {
+  const candidates = [
+    userSetName(host),
+    host.onvif?.model,
+    host.discovery?.scopes.name[0],
+    host.guess.brand,
+  ];
+  let base = "";
+  for (const candidate of candidates) {
+    base = slug(candidate);
+    if (base) break;
+  }
+  if (!base) base = "camera";
+  const octet = host.ip.split(".").pop();
+  let name = base;
+  if (used.has(name)) name = `${base}_${octet}`;
+  let counter = 2;
+  while (used.has(name)) {
+    name = `${base}_${octet}_${counter}`;
+    counter += 1;
+  }
+  used.add(name);
+  return name;
+}
+
+function onvifPortOf(host) {
+  if (!host.onvif) return null;
+  try {
+    const parsed = new URL(host.onvif.url);
+    return Number(parsed.port) || (parsed.protocol === "https:" ? 443 : 80);
+  } catch {
+    return null;
+  }
+}
+
+function rtspPlanFor(host) {
+  if (host.streams) {
+    return {
+      source: "onvif",
+      port: host.streams.main.port,
+      path: host.streams.main.path,
+      subPath: host.streams.sub && host.streams.sub.path !== host.streams.main.path
+        ? host.streams.sub.path
+        : null,
+    };
+  }
+  const probed = host.rtsp.find((entry) => entry.authedPath || entry.openPath);
+  if (probed) {
+    return {
+      source: probed.authedPath ? "rtsp probe with credentials" : "rtsp probe",
+      port: probed.port,
+      path: probed.authedPath ?? probed.openPath,
+      subPath: null,
+    };
+  }
+  const reachable = host.rtsp.find((entry) => entry.reachable);
+  if (reachable) return { source: null, port: reachable.port, path: null, subPath: null };
+  return null;
+}
+
+function buildCameraConfig(cameras, credentials) {
+  const used = new Set();
+  const lines = [];
+  const notes = [];
+
+  lines.push("server:");
+  lines.push(`  listen: ${yamlScalar(":80")}`);
+  lines.push(`  username: ${yamlScalar("viewer")}`);
+  lines.push(`  password: ${yamlScalar(randomBytes(12).toString("base64url"))}`);
+  lines.push("");
+  lines.push("cameras:");
+
+  let written = 0;
+  for (const host of cameras) {
+    const plan = rtspPlanFor(host);
+    const onvifPort = onvifPortOf(host);
+    if (!plan && onvifPort === null) {
+      notes.push(`${host.ip}: no RTSP and no ONVIF endpoint found. Left out.`);
+      continue;
+    }
+
+    const name = cameraName(host, used);
+    const label = userSetName(host);
+    lines.push(`  - name: ${yamlScalar(name)}`);
+    if (label && slug(label) !== name) lines.push(`    label: ${yamlScalar(label)}`);
+    lines.push(`    host: ${yamlScalar(host.ip)}`);
+    lines.push(`    username: ${yamlScalar(credentials ? credentials.user : "your_camera_account")}`);
+    lines.push(`    password: ${yamlScalar(credentials ? credentials.password : "your_camera_password")}`);
+
+    if (plan && plan.path) {
+      lines.push("    rtsp:");
+      lines.push(`      port: ${plan.port}`);
+      lines.push(`      path: ${yamlScalar(plan.path)}`);
+      if (plan.subPath) lines.push(`      sub_path: ${yamlScalar(plan.subPath)}`);
+      if (!plan.subPath) notes.push(`${host.ip} (${name}): found one stream only. No sub_path.`);
+    } else if (plan) {
+      notes.push(
+        `${host.ip} (${name}): RTSP answers on port ${plan.port}, but the path stayed unknown. ` +
+          "Add an rtsp: block with the path yourself.",
+      );
+    }
+
+    if (onvifPort !== null) {
+      lines.push("    onvif:");
+      lines.push(`      port: ${onvifPort}`);
+    }
+    lines.push("");
+    written += 1;
+  }
+
+  if (!credentials) {
+    notes.push("Set ONVIF_USER and ONVIF_PASSWORD to fill in the camera account, or edit the file.");
+  }
+  notes.push("Tapo needs the TP-Link cloud password. Add a tapo: block yourself when you want it.");
+  return { text: `${lines.join("\n").trimEnd()}\n`, written, notes };
 }
 
 function renderHost(host) {
@@ -834,6 +1157,12 @@ function renderHost(host) {
   } else if (host.ports.some((port) => ONVIF_PORTS.includes(port))) {
     lines.push("  onvif      no answer on /onvif/device_service");
   }
+  if (host.streams) {
+    const stream = (entry) => `${entry.name} ${entry.width}x${entry.height} ${entry.path}`;
+    const parts = [stream(host.streams.main)];
+    if (host.streams.sub) parts.push(stream(host.streams.sub));
+    lines.push(`  streams    ${parts.join(", ")}`);
+  }
   for (const rtsp of host.rtsp) {
     const parts = [`:${rtsp.port}`];
     if (!rtsp.reachable) {
@@ -841,6 +1170,8 @@ function renderHost(host) {
     } else {
       parts.push(`auth ${rtsp.auth}`);
       if (rtsp.openPath) parts.push(`open path ${rtsp.openPath}`);
+      if (rtsp.authedPath) parts.push(`path ${rtsp.authedPath} with credentials`);
+      if (rtsp.credentialsAccepted === false) parts.push("ONVIF_USER/ONVIF_PASSWORD rejected");
       if (rtsp.realm) parts.push(`realm "${rtsp.realm}"`);
       if (rtsp.server) parts.push(`server ${rtsp.server}`);
     }
@@ -868,6 +1199,8 @@ async function main() {
   const subnets = options.subnets.length > 0 ? options.subnets : interfaces.map((entry) => entry.cidr);
   if (options.skipDiscovery && options.skipSweep)
     fail("--skip-discovery and --skip-sweep leave nothing to scan.");
+  if (options.writeConfig && options.writeConfig !== "-" && existsSync(options.writeConfig))
+    fail(`${options.writeConfig} already exists. Move it, or choose another path.`);
   if (!options.skipSweep && subnets.length === 0) fail("Found no local subnet to sweep. Pass --subnet.");
 
   let discovered = new Map();
@@ -948,6 +1281,21 @@ async function main() {
 
   const cameras = hosts.filter((host) => host.likelyCamera);
   const others = hosts.filter((host) => !host.likelyCamera);
+
+  if (options.writeConfig) {
+    const config = buildCameraConfig(cameras, options.credentials);
+    if (options.writeConfig === "-") {
+      process.stdout.write(config.text);
+    } else {
+      writeFileSync(options.writeConfig, config.text);
+      log(`Wrote ${options.writeConfig} with ${config.written} camera(s).`);
+    }
+    for (const note of config.notes) log(`note: ${note}`);
+    if (options.writeConfig !== "-" && options.credentials) {
+      log("The file holds the camera account. Keep it out of version control.");
+    }
+    if (options.writeConfig === "-") return;
+  }
 
   if (options.json) {
     const output = {

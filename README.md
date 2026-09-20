@@ -54,7 +54,7 @@ cd ipcam-viewer
 ```
 
 2. Copy the template and add your cameras. See [Camera configuration](#camera-configuration).
-   Run `node scripts/discover-cameras.mjs` first when you do not know their addresses.
+   Or let a scan write the file for you. See [Write cameras.yaml from a scan](#write-camerasyaml-from-a-scan).
 
 ```bash
 cp cameras.yaml.example cameras.yaml
@@ -270,6 +270,30 @@ node scripts/discover-cameras.mjs --subnet 192.168.1.0/24 --json
 ONVIF_USER=admin ONVIF_PASSWORD=secret node scripts/discover-cameras.mjs
 ```
 
+### Write cameras.yaml from a scan
+
+With the camera account it can also write the config for you:
+
+```bash
+ONVIF_USER=admin ONVIF_PASSWORD=secret \
+  node scripts/discover-cameras.mjs --write-config cameras.yaml
+```
+
+It asks each camera over ONVIF for its stream profiles, and it takes the exact RTSP port and path
+from the answer. The largest H264 profile becomes `path`, and the smallest becomes `sub_path`. When a
+camera speaks no ONVIF, it tries the common RTSP paths with the same account instead.
+
+It never overwrites an existing file. Use `-` to print the config instead of writing it.
+
+Check the result before you use it:
+
+- The names come from the camera model, such as `tapo_c210`, unless you gave the camera a name in its
+  own app. Rename them to the room, for example `hallway`.
+- The viewer password under `server:` is random. Change it if you want your own.
+- A Tapo block is never written, because the TP-Link cloud password is not on the network.
+- Without `ONVIF_USER` and `ONVIF_PASSWORD` it writes placeholders for the camera account, and it
+  cannot read the stream path from a camera that needs a login.
+
 Run it on the host, not in Docker. Docker on macOS blocks multicast and hides the ARP table.
 `ONVIF_USER` and `ONVIF_PASSWORD` unlock the device information on cameras that reject the anonymous call.
 
@@ -284,6 +308,7 @@ Run it on the host, not in Docker. Docker on macOS blocks multicast and hides th
 | `--skip-sweep` | Sweep no ports. Inspect only the hosts that answer the probe. |
 | `--offline` | Look up no MAC vendor online. |
 | `--json` | Print the result as JSON. |
+| `--write-config <file>` | Write a `cameras.yaml` for the cameras that were found. `-` means stdout. |
 
 ## Remote access
 
@@ -360,6 +385,7 @@ a different address. Requests from the host skip the password, so the dev server
 | Control the service | `ipcam [start\|stop\|restart\|status\|logs\|url\|update\|uninstall]` |
 | Generate the configuration only | `node scripts/generate-config.mjs [--target native\|docker]` |
 | Find cameras on the LAN | `node scripts/discover-cameras.mjs [--help]` |
+| Write cameras.yaml from a scan | `node scripts/discover-cameras.mjs --write-config cameras.yaml` |
 | Start the dev server | `cd frontend && npm run dev` |
 | Build the frontend | `cd frontend && npm run build` |
 | Check the code style | `cd frontend && npm run lint` |

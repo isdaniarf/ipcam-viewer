@@ -28,7 +28,7 @@ Multi-camera IP video streaming viewer. React frontend talks to go2rtc for RTSP/
 ├── scripts/
 │   ├── generate-config.mjs     # Reads cameras.yaml → writes go2rtc.yaml + cameras.json
 │   ├── bundle.mjs              # Builds the self-contained native bundle: binary + www + config
-│   ├── discover-cameras.mjs    # WS-Discovery + port sweep, prints model and auth state per host
+│   ├── discover-cameras.mjs    # WS-Discovery + port sweep; --write-config writes cameras.yaml
 │   └── native/                 # ipcam CLI, launchd plist and systemd unit templates
 ├── install.sh                  # curl | sh entry point; installs a published release
 ├── .github/workflows/release.yml  # builds + publishes platform archives on a v* tag
@@ -184,6 +184,11 @@ It accepts a comma-separated list.
   go2rtc, because the vendored library otherwise stays on MSE until a reload. Seen on cold starts.
 - `generate-config.mjs` uses the `yaml` npm package (in `scripts/package.json`)
 - `discover-cameras.mjs` has no npm dependency. It uses `dgram`, `net`, `http` and `https` only.
+  It emits YAML by hand through `yamlScalar`, so keep it dependency free.
+- `--write-config` takes the RTSP port and path from ONVIF `GetProfiles` plus `GetStreamUri`, on the
+  media XAddr from `GetCapabilities` (it falls back to the device service URL, which Tapo accepts).
+  The largest H264 profile is `path`, the smallest is `sub_path`. The RTSP probe now speaks Digest and
+  Basic auth, so it can find a path on cameras without ONVIF.
   Run it on the host. Docker on macOS blocks multicast and hides the ARP table.
   `ONVIF_USER` and `ONVIF_PASSWORD` unlock `GetDeviceInformation` on cameras that reject the anonymous call.
 - Sensitive and generated files are gitignored: `cameras.yaml`, `.env`, `go2rtc/go2rtc.yaml`,
