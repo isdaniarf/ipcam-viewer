@@ -38,6 +38,7 @@ jobs:
             stage="stage/$platform"
             mkdir -p "$stage/service"
             cp -R frontend/dist "$stage/www"
+            rm -f "$stage/www/cameras.json"
             cp scripts/native/ipcam scripts/native/install.sh "$stage/"
             cp scripts/native/launchd.plist scripts/native/systemd.service "$stage/service/"
             chmod +x "$stage/ipcam" "$stage/install.sh"
