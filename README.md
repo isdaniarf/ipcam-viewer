@@ -26,8 +26,13 @@ It plays each stream with WebRTC. It falls back to MSE, and then to HLS.
 - Cameras that speak RTSP, ONVIF or Tapo, on the same network.
 - An ONVIF camera account, when you let `ipcam discover` find the cameras for you.
 
-The service runs as a launchd agent on macOS, or as a systemd unit on Linux. The installer adds an
+The service runs as a launchd daemon on macOS, or as a systemd unit on Linux. The installer adds an
 `ipcam` command to your PATH.
+
+On macOS the daemon runs as root and starts at boot, so the cameras come up before anyone logs in.
+Root is not a preference: macOS Local Network privacy blocks the LAN connections of any launchd
+process that runs as a normal user, and go2rtc then reaches no camera at all. `ipcam install`,
+`start`, `stop` and `uninstall` therefore ask for your password.
 
 ## Install
 
@@ -158,7 +163,8 @@ macOS marks a file that arrives through AirDrop or a browser download with a qua
 Gatekeeper then blocks the unsigned go2rtc binary. `ipcam install` removes that flag, so the copy runs.
 
 Build for the processor family of the target, not of the machine you build on. Use
-`--platform mac_amd64` for an Intel Mac. On Linux the installer needs `sudo` for the systemd unit.
+`--platform mac_amd64` for an Intel Mac. The installer needs `sudo` on both systems: for the systemd
+unit on Linux, and for the launchd daemon on macOS.
 
 Supported platforms: `mac_arm64`, `mac_amd64`, `linux_amd64`, `linux_arm64`, `linux_arm`,
 `linux_armv6` and `linux_i386`.

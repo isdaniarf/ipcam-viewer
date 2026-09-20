@@ -57,7 +57,8 @@ Two layouts exist. The native layout is the primary one.
 - **Native** — go2rtc alone. It serves `www/` (the built frontend and `cameras.json`) through
   `api.static_dir` on `server.listen` (default `:80`). Basic auth from `server.username` and
   `server.password` protects every path. Requests from the host itself skip the auth. A launchd
-  agent or a systemd unit keeps it running. `scripts/bundle.mjs` builds it, `bundle/ipcam install` installs it.
+  daemon (root, see the Local Network note below) or a systemd unit keeps it running.
+  `scripts/bundle.mjs` builds it, `bundle/ipcam install` installs it.
 - **Docker** — go2rtc on `:1984` inside the Docker network, nginx on `:80` in front. nginx serves the
   frontend and proxies `/api/ws` and `/api/hls` only. No auth. The generator runs with `--target docker`.
 
@@ -178,6 +179,26 @@ It accepts a comma-separated list.
 - `ipcam install` runs `xattr -d com.apple.quarantine` on the binary and on itself. Without that,
   Gatekeeper silently blocks the unsigned go2rtc binary on a Mac that received the bundle by AirDrop
   or by download. Verified: a quarantined binary produces no output at all.
+- The macOS service is a **LaunchDaemon that runs as root**, not a LaunchAgent. This is the whole
+  reason `plist_path` points at `/Library/LaunchDaemons`. macOS Local Network privacy (Sequoia and
+  later) blocks the outbound LAN connections of any launchd process that runs as a normal user, so
+  an agent reaches no camera: every RTSP dial fails instantly with `no route to host` while the
+  camera answers ping and accepts a DESCRIBE from a shell on the same host. Loopback is exempt, so
+  `:80` still serves the UI, `/api/streams` still lists every stream and `ipcam status` still reports
+  healthy — only the camera connections die, which makes it look like a camera or credential fault.
+  Measured on 26.7, one camera, same binary and config each time:
+  agent as the user 0 bytes; **daemon with `UserName` set to the user 0 bytes**; daemon as root 2.7 MB;
+  straight from a shell 2.1 MB. So the exemption follows the effective uid, not the launchd domain,
+  and root is the only configuration that works. A shell works only because it inherits the
+  terminal's own grant (Ghostty, iTerm).
+  Things that look like the fix and are not: granting go2rtc under System Settings > Privacy &
+  Security > Local Network (the entry appears and reads on, and the dial still fails, across a
+  toggle off/on and a reboot); ad-hoc `codesign`; wrapping the binary in a registered `.app`.
+  `tccutil reset LocalNetwork <id>` cannot target it at all, because it takes a LaunchServices
+  bundle identifier and a bare executable has none. Note the settings pane does not refresh while
+  open, so an entry that looks absent may just be stale — reopen it before concluding anything.
+  Apple platform binaries (`/usr/bin/python3`) are exempt and connect fine from an agent, so do not
+  probe this with one; a third-party binary (Node.js, Developer ID signed) reproduces it exactly.
 - Release archives hold `ipcam`, `www/`, `service/` and `build-info` only. No binary and no config:
   `install.sh` reads `go2rtc=` from `build-info` and fetches that binary from go2rtc's own upstream release.
 - The config never ships in a release. `ipcam config export|import` moves `cameras.ini`, `go2rtc.yaml`

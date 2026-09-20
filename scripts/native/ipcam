@@ -90,23 +90,38 @@ render() {
   sed -e "s#{{BUNDLE_DIR}}#$BUNDLE_DIR#g" -e "s#{{LABEL}}#$LABEL#g" -e "s#{{USER}}#$(id -un)#g" "$1"
 }
 
-plist_path() { printf '%s\n' "$HOME/Library/LaunchAgents/$LABEL.plist"; }
-domain() { printf 'gui/%s\n' "$(id -u)"; }
+# A LaunchDaemon, not a LaunchAgent, and it runs as root. macOS Local Network
+# privacy blocks every LAN connection of a process that runs as a normal user
+# from launchd, so an agent reaches no camera. root is exempt. See CLAUDE.md.
+plist_path() { printf '/Library/LaunchDaemons/%s.plist\n' "$LABEL"; }
+domain() { printf 'system\n'; }
+
+# `launchctl bootstrap system` fails with "Load failed: 5: Input/output error"
+# when it runs from a user's terminal. The legacy loader still works.
+load_macos() {
+  sudo launchctl bootstrap system "$(plist_path)" 2>/dev/null ||
+    sudo launchctl load -w "$(plist_path)"
+}
 
 start_macos() {
   [ -f "$(plist_path)" ] || die "the service is not installed. Run: ipcam install"
-  launchctl bootstrap "$(domain)" "$(plist_path)" 2>/dev/null || true
+  load_macos
 }
-stop_macos() { launchctl bootout "$(domain)/$LABEL" 2>/dev/null || true; }
+stop_macos() {
+  sudo launchctl bootout "system/$LABEL" 2>/dev/null ||
+    sudo launchctl unload "$(plist_path)" 2>/dev/null || true
+}
 
 install_macos() {
-  mkdir -p "$(dirname "$(plist_path)")"
-  render "$BUNDLE_DIR/service/launchd.plist" > "$(plist_path)"
+  tmp=$(mktemp) || die "could not write a temporary file"
+  render "$BUNDLE_DIR/service/launchd.plist" > "$tmp"
   stop_macos
-  launchctl bootstrap "$(domain)" "$(plist_path)"
+  sudo install -o root -g wheel -m 644 "$tmp" "$(plist_path)"
+  rm -f "$tmp"
+  load_macos
 }
 
-uninstall_macos() { stop_macos; rm -f "$(plist_path)"; }
+uninstall_macos() { stop_macos; sudo rm -f "$(plist_path)"; }
 
 state_macos() {
   info=$(launchctl print "$(domain)/$LABEL" 2>/dev/null) || {
@@ -118,7 +133,11 @@ state_macos() {
   printf '%s%s\n' "${state:-unknown}" "${pid:+ (pid $pid)}"
 }
 
-logs_macos() { [ -f "$LOG" ] || die "no log file at $LOG"; tail -n 50 -f "$LOG"; }
+# root owns the log, because the daemon runs as root.
+logs_macos() {
+  [ -f "$LOG" ] || die "no log file at $LOG"
+  if [ -r "$LOG" ]; then tail -n 50 -f "$LOG"; else sudo tail -n 50 -f "$LOG"; fi
+}
 
 unit_path() { printf '/etc/systemd/system/%s.service\n' "$UNIT_NAME"; }
 start_linux() { sudo systemctl start "$UNIT_NAME"; }

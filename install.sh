@@ -113,6 +113,7 @@ esac
 if [ -f "$PREFIX/go2rtc.yaml" ]; then
   say ""
   say "Config found. Starting the service."
+  say "This asks for your password: the service is a system daemon."
   "$PREFIX/ipcam" install --no-link
 else
   say ""
