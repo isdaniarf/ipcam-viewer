@@ -243,6 +243,10 @@ It accepts a comma-separated list.
   to anyone with the viewer password, verified by a WebSocket client pulling MSE bytes for a camera
   absent from the served manifest. Per-camera separation needs a second instance. The docker target is
   unchanged, since nginx already restricts paths there.
+- Route folders are created by `sync_routes`, which now runs from `render_config`, from
+  `config import` (both the tarball and the bare-yaml branch) and from `require_bundle`, so a bundle
+  that received only `go2rtc.yaml` + `cameras.json` still gets them. A manifest with `route` but no
+  folder yields a 404 that looks like a config error; `ipcam config show` marks those MISSING.
 - A camera `route` becomes a real directory under `www/`, because go2rtc's file server has no SPA
   fallback: it 404s an unknown path but 301s `/hallway` to `/hallway/` and serves the index there.
   `generate-config.mjs` and `ipcam render_config` both copy `www/index.html` into `www/<route>/` and

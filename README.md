@@ -363,6 +363,9 @@ leaves the address alone.
 Use letters, digits, `_` and `-`. Each route must be unique, and `api`, `assets`, `index.html` and
 `cameras.json` are reserved.
 
+A route needs a folder on disk, which `ipcam update` creates. `ipcam config show` lists every route
+and says which one is missing, and `ipcam install`, `start` and `restart` recreate them.
+
 ### Protocol keys
 
 A camera speaks a protocol when any key with that prefix appears. `onvif = on` turns a protocol on
@@ -539,6 +542,11 @@ on some systems. Set `listen = :8080` under `[server]` in `cameras.ini`, then ru
 
 **A tile stays on "Connecting" or shows "Offline".**
 Check that the camera answers on its RTSP port. Check the `rtsp.path` value.
+
+**A route gives 404.**
+Run `ipcam config show`. It lists each route and marks any whose folder is missing. Run `ipcam update`
+to recreate them. Check too that the route is the one you meant: it is the `route` value, not a camera
+name and not the viewer user name.
 
 **The browser shows no camera.**
 Run `ipcam update` and read the generator output.

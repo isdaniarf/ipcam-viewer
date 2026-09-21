@@ -85,6 +85,8 @@ require_bundle() {
   [ -x "$BUNDLE_DIR/go2rtc" ] || die "no go2rtc binary in $BUNDLE_DIR"
   if [ ! -f "$CONFIG" ] && [ -f "$BUNDLE_DIR/cameras.ini" ]; then render_config; fi
   [ -f "$CONFIG" ] || die "no config in $BUNDLE_DIR. Run: ipcam discover, or: ipcam config import cameras.ini"
+  [ -f "$BUNDLE_DIR/cameras.json" ] && sync_routes
+  return 0
 }
 
 render() {
@@ -369,7 +371,10 @@ cmd_config() {
           cp "$scratch/go2rtc.yaml" "$BUNDLE_DIR/go2rtc.yaml"
           if [ -f "$scratch/cameras.json" ]; then
             cp "$scratch/cameras.json" "$BUNDLE_DIR/cameras.json"
-            if [ -d "$BUNDLE_DIR/www" ]; then cp "$scratch/cameras.json" "$BUNDLE_DIR/www/cameras.json"; fi
+            if [ -d "$BUNDLE_DIR/www" ]; then
+              cp "$scratch/cameras.json" "$BUNDLE_DIR/www/cameras.json"
+              sync_routes
+            fi
           fi
           rm -rf "$scratch"
         fi
@@ -380,7 +385,9 @@ cmd_config() {
       elif grep -q "^api:" "$source" 2>/dev/null; then
         cp "$source" "$BUNDLE_DIR/go2rtc.yaml"
         rm -rf "$scratch"
-        [ -f "$BUNDLE_DIR/cameras.json" ] || echo "note: no cameras.json came with it. The page will list no camera until one arrives."
+        if [ -f "$BUNDLE_DIR/cameras.json" ]; then sync_routes; else
+          echo "note: no cameras.json came with it. The page will list no camera until one arrives."
+        fi
       elif grep -qE '^(cameras|server):[[:space:]]*$' "$source" 2>/dev/null; then
         rm -rf "$scratch"
         die "$original is in the old YAML format. The config is INI now: one [section] per camera. See cameras.ini.example."
@@ -402,6 +409,16 @@ cmd_config() {
       echo "Listen:  $(listen_address)"
       echo "User:    $(viewer_user)"
       echo "Cameras: $(sed -n 's/.*"name": "\([^"]*\)".*/\1/p' "$BUNDLE_DIR/cameras.json" 2>/dev/null | tr '\n' ' ')"
+      routes=$(sed -n 's/.*"route": "\([^"]*\)".*/\1/p' "$BUNDLE_DIR/cameras.json" 2>/dev/null)
+      if [ -n "$routes" ]; then
+        for route in $routes; do
+          if [ -f "$BUNDLE_DIR/www/$route/index.html" ]; then
+            echo "Route:   /$route"
+          else
+            echo "Route:   /$route  MISSING, run: ipcam update"
+          fi
+        done
+      fi
       ;;
     *) die "unknown config action \"$action\". Use export, import or show." ;;
   esac
