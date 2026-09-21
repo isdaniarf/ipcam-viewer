@@ -218,8 +218,10 @@ It accepts a comma-separated list.
   because the release ships it next to the discovery script without npm.
 - `--write-runtime <dir>` writes `go2rtc.yaml` + `cameras.json` (+ `www/cameras.json`) with no YAML
   parser, so a release install can configure itself. `ipcam discover --deep` wraps it.
-- `ipcam discover` (no flag) needs no Node at all. It writes `cameras.ini` (with `onvif.profile` /
-  `onvif.sub_profile`) and renders it through `config.awk`, so every path ends in the same reader. It starts the bundled go2rtc on a loopback port and
+- `ipcam discover` (no flag) needs no Node at all. It writes `cameras.ini` only (with `onvif.profile` /
+  `onvif.sub_profile`) and touches neither `go2rtc.yaml` nor the service; `--apply` renders and restarts.
+  `require_bundle` renders from `cameras.ini` when `go2rtc.yaml` is missing, so `ipcam install` straight
+  after a scan still works. Every path ends in `config.awk`, the one reader. It starts the bundled go2rtc on a loopback port and
   uses go2rtc's own `GET /api/onvif`: with no `src` it runs WS-Discovery, with `src=onvif://user:pass@host:port`
   it lists the profiles as `onvif://...?subtype=profile_N` source URLs, which are usable streams
   (verified: profile_1 2560x1440, profile_2 640x360). Discovery is UDP, so it probes twice and merges.

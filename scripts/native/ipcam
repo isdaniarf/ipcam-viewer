@@ -83,6 +83,7 @@ allow_unsigned_binary() {
 
 require_bundle() {
   [ -x "$BUNDLE_DIR/go2rtc" ] || die "no go2rtc binary in $BUNDLE_DIR"
+  if [ ! -f "$CONFIG" ] && [ -f "$BUNDLE_DIR/cameras.ini" ]; then render_config; fi
   [ -f "$CONFIG" ] || die "no config in $BUNDLE_DIR. Run: ipcam discover, or: ipcam config import cameras.ini"
 }
 
@@ -556,8 +557,7 @@ discover_with_go2rtc() {
   } > "$BUNDLE_DIR/cameras.ini"
   rm -rf "$scratch"
 
-  render_config
-  echo "Wrote $BUNDLE_DIR/cameras.ini with $found camera(s). Edit it, then run: ipcam update"
+  echo "Wrote $BUNDLE_DIR/cameras.ini with $found camera(s)."
   echo "Viewer login: $viewer / $secret"
 }
 
@@ -572,18 +572,19 @@ discover_with_node() {
     rm -f "$BUNDLE_DIR/cameras.ini"
   fi
   node "$script" --write-config "$BUNDLE_DIR/cameras.ini" "$@" || die "the scan failed"
-  render_config
-  echo "Wrote $BUNDLE_DIR/cameras.ini. Edit it, then run: ipcam update"
+  echo "Wrote $BUNDLE_DIR/cameras.ini."
 }
 
 cmd_discover() {
   deep=no
   force=no
+  apply=no
   rest=""
   for argument in "$@"; do
     case $argument in
       --deep) deep=yes ;;
       --force) force=yes ;;
+      --apply) apply=yes ;;
       *) rest="$rest $argument" ;;
     esac
   done
@@ -595,9 +596,19 @@ cmd_discover() {
     discover_with_go2rtc "$force"
   fi
 
-  [ -f "$CONFIG" ] || die "the scan wrote no config"
+  [ -f "$BUNDLE_DIR/cameras.ini" ] || die "the scan wrote no cameras.ini"
+
+  if [ "$apply" != yes ]; then
+    echo ""
+    echo "It changed no running config. Review the file, rename the cameras, then:"
+    echo "  ipcam update"
+    return 0
+  fi
+
+  render_config
+  echo "Config regenerated from $BUNDLE_DIR/cameras.ini"
   if service_is_this_bundle; then
-    "$SELF" restart
+    cmd_restart
   else
     echo "Next: ipcam install"
   fi
@@ -638,9 +649,12 @@ Usage: ipcam <command> [options]
   url                  Print the address and the viewer user name
   update [--build]     Regenerate the config from cameras.ini, then restart.
                        --build also rebuilds the page. It needs the repository.
-  discover [--deep]    Scan for ONVIF cameras with go2rtc and write the config.
-                       --deep uses the bundled scanner instead. It needs Node.js,
-                       and it also finds cameras that speak no ONVIF.
+  discover [options]   Scan for ONVIF cameras and write cameras.ini. It leaves the
+                       running config alone; run "ipcam update" to apply it.
+                         --apply  regenerate the config and restart at once
+                         --force  replace an existing cameras.ini
+                         --deep   use the bundled scanner instead. It needs Node.js,
+                                  and it also finds cameras that speak no ONVIF.
                        Set ONVIF_USER and ONVIF_PASSWORD first.
   config <action>      show, export <file.tgz>, or
                        import <file.tgz|cameras.ini|go2rtc.yaml|url>

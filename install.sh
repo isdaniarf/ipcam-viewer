@@ -121,7 +121,7 @@ else
   say "so it never ships in a release. Choose one way to make it:"
   say ""
   say "  ONVIF_USER=... ONVIF_PASSWORD=... ipcam discover"
-  say "      scan the network for ONVIF cameras"
+  say "      scan the network for ONVIF cameras, then review the cameras.ini it writes"
   say "  ipcam config import cameras.ini"
   say "      use a file you wrote by hand; the format is in cameras.ini.example at"
   say "      https://github.com/$REPO"

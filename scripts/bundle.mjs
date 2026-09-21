@@ -133,6 +133,7 @@ Platform: ${platform}, go2rtc ${version}
 
 Install:  ./ipcam install     Installs the service, starts it, and adds "ipcam" to your PATH.
 Config:   ipcam discover      Scans for ONVIF cameras and writes cameras.ini (set ONVIF_USER/ONVIF_PASSWORD).
+                              It changes no running config. Review the file, then: ipcam update
           ipcam config import cameras.ini    Uses a file you wrote by hand.
 Then:     ipcam status | logs | restart | url | update | uninstall
 Help:     ./ipcam help

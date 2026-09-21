@@ -109,6 +109,9 @@ ONVIF_USER=admin ONVIF_PASSWORD=secret ipcam discover
 ipcam install
 ```
 
+`ipcam discover` writes `cameras.ini` and leaves the running config alone. Review the file, then
+`ipcam install` or `ipcam update` applies it.
+
 Or write `cameras.ini` by hand, as shown in [Camera configuration](#camera-configuration), and import it:
 
 ```bash
@@ -125,12 +128,22 @@ ipcam install
 ```
 
 `ipcam discover` needs nothing but the bundle. It starts go2rtc on a loopback port, asks it to find
-ONVIF cameras, reads each camera's stream profiles, and writes the config. It uses the largest profile
-for the grid tile and the second one as the low resolution stream. It prints the viewer login it
-generated. Pass `--force` to replace a config that already exists.
+ONVIF cameras, reads each camera's stream profiles, and writes `cameras.ini`. It uses the largest
+profile for the grid tile and the second one as the low resolution stream, and it prints the viewer
+login it generated.
 
-Add `--deep` for a slower scan with the bundled scanner. It needs Node.js 22, and it also finds
-cameras that speak no ONVIF, and reports the vendor and the open ports.
+It writes that one file and nothing else. The running config stays as it is, so you can rename the
+cameras from `c210` to `hallway` first. Apply it when you are happy:
+
+```bash
+ipcam update
+```
+
+| Option | Effect |
+|--------|--------|
+| `--apply` | Regenerate the config and restart at once, with no review step. |
+| `--force` | Replace an existing `cameras.ini`. It keeps the viewer login from that file. |
+| `--deep` | Use the bundled scanner instead. It needs Node.js 22, and it also finds cameras that speak no ONVIF, and reports the vendor and the open ports. |
 
 `ipcam upgrade` installs a newer release later and keeps the config.
 
@@ -202,7 +215,7 @@ The command then works from anywhere.
 | `ipcam logs` | Follow the service log |
 | `ipcam url` | Print the address and the viewer user name |
 | `ipcam update [--build]` | Regenerate the config from `cameras.ini`, then restart |
-| `ipcam discover [--deep]` | Scan the network and write the config for the cameras it finds |
+| `ipcam discover [--apply\|--force\|--deep]` | Scan the network and write `cameras.ini`. It applies nothing unless you pass `--apply` |
 | `ipcam config show\|export\|import` | Show, export or import the config. Import takes a `.tgz`, a `cameras.ini` or a `go2rtc.yaml` |
 | `ipcam upgrade` | Install the newest release, and keep the config |
 | `ipcam uninstall` | Stop the service, remove it, and remove the link |
