@@ -78,7 +78,7 @@ esac
 chmod +x "$SCRATCH/go2rtc" "$SCRATCH/ipcam"
 
 if [ "$KEEP_CONFIG" = 1 ] && [ -d "$PREFIX" ]; then
-  for keep in go2rtc.yaml cameras.json; do
+  for keep in cameras.ini go2rtc.yaml cameras.json; do
     [ -f "$PREFIX/$keep" ] && cp "$PREFIX/$keep" "$SCRATCH/$keep"
   done
 fi

@@ -277,9 +277,13 @@ cmd_update() {
     command -v node >/dev/null 2>&1 || die "node is not installed"
     node "$repo/scripts/bundle.mjs" --out "$BUNDLE_DIR"
   else
-    if [ -n "$repo" ] && [ -f "$repo/cameras.ini" ]; then cp "$repo/cameras.ini" "$BUNDLE_DIR/cameras.ini"; fi
     render_config
     echo "Config regenerated from $BUNDLE_DIR/cameras.ini"
+    if [ -n "$repo" ] && [ -f "$repo/cameras.ini" ] &&
+       ! cmp -s "$repo/cameras.ini" "$BUNDLE_DIR/cameras.ini"; then
+      echo "note: $repo/cameras.ini differs from the one above, and was not used."
+      echo "      Run 'ipcam update --build' to take the repository's copy instead."
+    fi
   fi
 
   if service_is_this_bundle; then

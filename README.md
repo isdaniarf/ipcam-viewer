@@ -221,8 +221,9 @@ The command then works from anywhere.
 | `ipcam uninstall` | Stop the service, remove it, and remove the link |
 | `ipcam version` | Show the app, bundle and go2rtc versions |
 
-`ipcam update` reads the `cameras.ini` next to the installed bundle and needs nothing else. Pass
-`--build` to rebuild the web page as well, which needs the repository and Node.js.
+`ipcam update` reads the `cameras.ini` next to the installed bundle and needs nothing else. That file
+is the one the service uses, so edit it in place. Pass `--build` to rebuild the web page and take the
+repository's copy of the config, which needs the repository and Node.js.
 
 ### Change the cameras
 

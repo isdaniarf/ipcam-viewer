@@ -204,8 +204,9 @@ It accepts a comma-separated list.
 - The config never ships in a release. `ipcam config export|import` moves `cameras.ini`, `go2rtc.yaml`
   and `cameras.json` between machines as a tarball. Import sniffs the input: a tarball, a `cameras.ini`
   (has a `[section]` line), or a runtime `go2rtc.yaml` (has `^api:`). A `cameras.ini` is rendered on the
-  spot by `config.awk`, so no repo and no Node are needed. `ipcam update` does the same for the bundle's
-  own `cameras.ini` (copying the repo's copy first when the repo is present); `--build` needs the repo.
+  spot by `config.awk`, so no repo and no Node are needed. `ipcam update` renders the bundle's own
+  `cameras.ini` and never copies the repo's over it; it only warns when the two differ. Only `--build`
+  takes the repo copy, via a full rebundle. `install.sh` preserves `cameras.ini` across an upgrade.
 - `bundle/build-info` records `repo=`, so `ipcam update` can call the generator on the build machine.
   It fails with a clear message on a machine that has no repository or no Node.js.
 - `camera-video.ts` retries the WebRTC offer with backoff (5 s to 60 s) after a `webrtc/offer` error from
