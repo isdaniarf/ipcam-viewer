@@ -1,9 +1,11 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { networkInterfaces } from "node:os";
+import { cpSync } from "node:fs";
 import {
   buildCameras,
+  buildViews,
   buildGo2rtcConfig,
   buildServer,
   configFromIni,
@@ -71,11 +73,11 @@ function readCamerasFile(camerasFile, errors) {
   }
   const parsed = parseIni(text);
   errors.push(...parsed.errors);
-  const { server, cameras } = configFromIni(parsed.sections, errors);
+  const { server, cameras, views } = configFromIni(parsed.sections, errors);
   if (cameras.length === 0 && errors.length === 0) {
     errors.push(`${camerasFile} names no camera. Add a [camera_name] section.`);
   }
-  return { cameras, server };
+  return { cameras, server, views };
 }
 
 export function syncRouteDirectories(staticDirPath, manifest, warnings) {
@@ -108,6 +110,47 @@ export function syncRouteDirectories(staticDirPath, manifest, warnings) {
   return wanted;
 }
 
+function writeView({ view, cameras, outDir, staticDirPath, candidates, warnings }) {
+  const subset = cameras.filter((camera) => view.cameras.includes(camera.name));
+  const errors = [];
+  const { streams, manifest } = buildCameras(subset, errors, warnings);
+  if (errors.length > 0) throw new ConfigError(errors);
+
+  const dir = resolve(outDir, "views", view.name);
+  const www = resolve(dir, "www");
+  mkdirSync(www, { recursive: true });
+
+  if (existsSync(staticDirPath)) {
+    for (const entry of readdirSync(staticDirPath)) {
+      if (entry === "cameras.json" || entry === ".routes") continue;
+      const source = resolve(staticDirPath, entry);
+      if (statSync(source).isDirectory() && entry !== "assets") continue;
+      cpSync(source, resolve(www, entry), { recursive: true });
+    }
+  }
+
+  const json = manifestJson(manifest);
+  writeFileSync(resolve(dir, "cameras.json"), json);
+  writeFileSync(resolve(www, "cameras.json"), json);
+  const routes = syncRouteDirectories(www, manifest, warnings);
+
+  const config = buildGo2rtcConfig({
+    streams,
+    api: {
+      listen: view.listen,
+      static_dir: "www",
+      allow_paths: view.allowPaths,
+      username: view.username,
+      password: view.password,
+    },
+    candidates,
+    webrtcListen: view.webrtc,
+  });
+  writeFileSync(resolve(dir, "go2rtc.yaml"), emitGo2rtcYaml(config));
+
+  return { name: view.name, listen: view.listen, cameras: view.cameras, routes, dir };
+}
+
 export function generate(options = {}) {
   const target = options.target ?? "native";
   if (target !== "native" && target !== "docker") {
@@ -122,9 +165,10 @@ export function generate(options = {}) {
   const errors = [];
   const warnings = [];
 
-  const { cameras, server } = readCamerasFile(camerasFile, errors);
+  const { cameras, server, views: rawViews } = readCamerasFile(camerasFile, errors);
   const { streams, manifest } = buildCameras(cameras, errors, warnings);
   const serverConfig = target === "native" ? buildServer(server, errors) : null;
+  const views = target === "native" ? buildViews(rawViews ?? [], cameras, server, errors) : [];
   if (errors.length > 0) throw new ConfigError(errors);
 
   const { candidates, candidateSource } = webrtcCandidates(server, target, warnings);
@@ -163,7 +207,28 @@ export function generate(options = {}) {
     ? syncRouteDirectories(staticDirPath, manifest, warnings)
     : [];
 
-  return { target, configPath, manifestPaths, manifest, streams, candidates, candidateSource, warnings, api, routes };
+  const viewResults = [];
+  if (views.length > 0) {
+    const viewsRoot = resolve(outDir, "views");
+    if (existsSync(viewsRoot)) {
+      for (const entry of readdirSync(viewsRoot)) {
+        if (!views.some((view) => view.name === entry)) {
+          rmSync(resolve(viewsRoot, entry), { recursive: true, force: true });
+        }
+      }
+    }
+    for (const view of views) {
+      viewResults.push(
+        writeView({ view, cameras, outDir, staticDirPath, candidates, warnings }),
+      );
+    }
+  } else {
+    const viewsRoot = resolve(outDir, "views");
+    if (existsSync(viewsRoot)) rmSync(viewsRoot, { recursive: true, force: true });
+  }
+  writeFileSync(resolve(outDir, "views.txt"), views.map((view) => view.name).join("\n") + (views.length ? "\n" : ""));
+
+  return { target, configPath, manifestPaths, manifest, streams, candidates, candidateSource, warnings, api, routes, views: viewResults };
 }
 
 export function printSummary(result) {
@@ -179,6 +244,9 @@ export function printSummary(result) {
   }
   if (result.target === "native") {
     console.log(`Server: listen ${result.api.listen}, static ${result.api.static_dir}, user ${result.api.username}`);
+  }
+  for (const view of result.views ?? []) {
+    console.log(`View ${view.name}: ${view.listen}, ${view.cameras.length} camera(s): ${view.cameras.join(", ")}`);
   }
   if (result.routes && result.routes.length > 0) {
     console.log(`Routes: ${result.routes.map((route) => `/${route}`).join(", ")}`);

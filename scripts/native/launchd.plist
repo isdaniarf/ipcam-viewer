@@ -6,7 +6,7 @@
   <string>{{LABEL}}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>{{BUNDLE_DIR}}/go2rtc</string>
+    <string>{{BINARY}}</string>
     <string>-config</string>
     <string>{{BUNDLE_DIR}}/go2rtc.yaml</string>
   </array>

@@ -11,6 +11,10 @@ export function parseIni(text) {
     const header = /^\[([^\]]+)\]$/.exec(line);
     if (header) {
       const name = header[1].replace(/^[ \t]+|[ \t]+$/g, "");
+      if (name === "") {
+        errors.push(`line ${number}: empty [section] name`);
+        return;
+      }
       if (sections.some((section) => section.name === name)) {
         errors.push(`line ${number}: duplicate section [${name}]`);
       }

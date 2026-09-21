@@ -3,6 +3,9 @@ export const NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 export const DEFAULT_PORT = { rtsp: 554, onvif: 80 };
 export const DEFAULT_SERVER = { listen: ":80", username: "viewer" };
 export const DEFAULT_ALLOW_PATHS = ["/", "/assets", "/cameras.json", "/api/ws", "/api/hls"];
+export const VIEW_PREFIX = "view:";
+export const VIEW_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
+const VIEW_KEYS = new Set(["listen", "username", "password", "cameras", "webrtc", "allow_paths"]);
 
 export function toLabel(name) {
   return name
@@ -175,8 +178,8 @@ export function buildServer(server, errors) {
   return { listen: String(listen), username: String(username), password, allowPaths };
 }
 
-export function buildGo2rtcConfig({ streams, api, candidates }) {
-  const webrtc = { listen: ":8555", ice_servers: [] };
+export function buildGo2rtcConfig({ streams, api, candidates, webrtcListen }) {
+  const webrtc = { listen: webrtcListen ?? ":8555", ice_servers: [] };
   if (candidates && candidates.length > 0) webrtc.candidates = candidates;
   return { streams, api, webrtc };
 }
@@ -197,11 +200,40 @@ const PROTOCOL_KEYS = {
 const ENABLE_WORDS = new Set(["", "on", "yes", "true", "1"]);
 const DISABLE_WORDS = new Set(["off", "no", "false", "0"]);
 
+function viewFromSection(section, errors) {
+  const name = section.name.slice(VIEW_PREFIX.length);
+  if (!VIEW_NAME_PATTERN.test(name)) {
+    errors.push(`line ${section.line}: invalid view name "${name}". Use letters, digits, "_" and "-".`);
+    return null;
+  }
+  const view = { name, line: section.line };
+  for (const [key, { value, line }] of section.entries) {
+    if (!VIEW_KEYS.has(key)) {
+      errors.push(`line ${line}: unknown key "${key}" in [view:${name}]`);
+      continue;
+    }
+    if (value === "") {
+      errors.push(`line ${line}: "${key}" has no value`);
+      continue;
+    }
+    view[key] = key === "cameras" || key === "allow_paths"
+      ? value.split(",").map((item) => item.trim()).filter(Boolean)
+      : value;
+  }
+  return view;
+}
+
 export function configFromIni(sections, errors) {
   let server = null;
   const cameras = [];
+  const views = [];
 
   for (const section of sections) {
+    if (section.name.startsWith(VIEW_PREFIX)) {
+      const view = viewFromSection(section, errors);
+      if (view) views.push(view);
+      continue;
+    }
     if (section.name === "server") {
       server = {};
       for (const [key, { value, line }] of section.entries) {
@@ -262,7 +294,59 @@ export function configFromIni(sections, errors) {
     cameras.push(camera);
   }
 
-  return { server, cameras };
+  return { server, cameras, views };
+}
+
+export function buildViews(views, cameras, mainServer, errors) {
+  const known = new Set(cameras.map((camera) => camera.name));
+  const seenName = new Set();
+  const seenListen = new Set([String(mainServer?.listen ?? DEFAULT_SERVER.listen)]);
+  const result = [];
+
+  views.forEach((view, index) => {
+    const where = `view "${view.name}"`;
+    if (seenName.has(view.name)) {
+      errors.push(`${where} is a duplicate.`);
+      return;
+    }
+    seenName.add(view.name);
+
+    if (typeof view.listen !== "string" || view.listen === "") {
+      errors.push(`${where} needs \`listen\`, for example ":8080".`);
+      return;
+    }
+    if (seenListen.has(view.listen)) {
+      errors.push(`${where} listens on ${view.listen}, which another server already uses.`);
+      return;
+    }
+    seenListen.add(view.listen);
+
+    if (typeof view.password !== "string" || view.password === "") {
+      errors.push(`${where} needs \`password\`.`);
+      return;
+    }
+    if (!Array.isArray(view.cameras) || view.cameras.length === 0) {
+      errors.push(`${where} needs \`cameras\`, a comma separated list of camera names.`);
+      return;
+    }
+    const missing = view.cameras.filter((name) => !known.has(name));
+    if (missing.length > 0) {
+      errors.push(`${where} names no such camera: ${missing.join(", ")}`);
+      return;
+    }
+
+    result.push({
+      name: view.name,
+      listen: view.listen,
+      username: view.username ?? DEFAULT_SERVER.username,
+      password: view.password,
+      webrtc: view.webrtc ?? `:${8556 + index}`,
+      allowPaths: view.allow_paths && view.allow_paths.length > 0 ? view.allow_paths : DEFAULT_ALLOW_PATHS,
+      cameras: view.cameras,
+    });
+  });
+
+  return result;
 }
 
 function yamlQuote(value) {

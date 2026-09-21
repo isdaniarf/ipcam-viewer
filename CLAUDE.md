@@ -225,6 +225,15 @@ It accepts a comma-separated list.
   generator in discover). Both scan paths reuse an existing `[server]` block rather than replacing it:
   the shell path via `existing_server_value`, the `--deep` path via `--keep-server`, which the CLI
   points at a copy of the old file before it is replaced.
+- `[view:<name>]` sections make extra go2rtc instances, which is the only real per-camera access
+  control: a view's config holds only its own streams, so `/api/ws?src=other` returns nothing there.
+  Verified live: guest 37 KB for its camera, 0 bytes for one outside the view, owner 90 KB for the same.
+  Generation writes `views/<name>/{go2rtc.yaml,cameras.json,www/}` plus `views.txt`; the per-view `www`
+  copies `index.html` and `assets/` and gets its own filtered `cameras.json` and route dirs. Ports must
+  differ, including WebRTC (auto `:8556`, `:8557`, ...). Service files template `{{BINARY}}` (always the
+  bundle root) separately from `{{BUNDLE_DIR}}` (the instance directory); labels are
+  `io.ipcam-viewer.go2rtc.<view>` and units `ipcam-viewer-<view>`. `for_each_instance` drives install,
+  start, stop, restart and uninstall across the main server and every view.
 - The native `api` block always emits `allow_paths`, default
   `['/', '/assets', '/cameras.json', '/api/ws', '/api/hls']`, overridable by a comma-separated
   `allow_paths` under `[server]`. It gates loopback too. Measured: the page, assets, manifest, route

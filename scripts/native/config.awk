@@ -6,6 +6,7 @@ BEGIN {
   nsec = 0; nerr = 0; cur = ""
   proto[1] = "rtsp"; proto[2] = "onvif"; proto[3] = "tapo"; nproto = 3
   split("listen username password candidates allow_paths", list, " "); for (i in list) server_key[list[i]]
+  split("listen username password cameras webrtc allow_paths", list, " "); for (i in list) view_key[list[i]]
   split("/ /assets /cameras.json /api/ws /api/hls", list, " ")
   ndefault_allow = 0
   for (i = 1; i <= 5; i++) default_allow[++ndefault_allow] = list[i]
@@ -121,7 +122,7 @@ END {
   nstreams = 0; ncams = 0
   for (s = 1; s <= nsec; s++) {
     name = secname[s]
-    if (name == "server") continue
+    if (name == "server" || index(name, "view:") == 1) continue
     where = "camera \"" name "\""
     if (name !~ /^[A-Za-z0-9_-]+$/) { err(where " has an invalid name. Use letters, digits, \"_\" and \"-\" only."); continue }
 
@@ -163,6 +164,7 @@ END {
     if (!any) { err(where " enables no protocol. Add an `rtsp:`, `onvif:` or `tapo:` block."); continue }
 
     entry = ""
+    first_stream = nstreams + 1
     for (i = 1; i <= nproto; i++) {
       p = proto[i]
       if (!((p in enabled) && enabled[p] == 1)) continue
@@ -202,6 +204,9 @@ END {
     }
     if (entry == "") continue
     cam_name[++ncams] = name
+    cam_index[name] = ncams
+    cam_first[ncams] = first_stream
+    cam_last[ncams] = nstreams
     cam_label[ncams] = has(name, "label") ? get(name, "label") : label_of(name)
     cam_route[ncams] = has(name, "route") ? get(name, "route") : ""
     cam_entry[ncams] = entry
@@ -213,26 +218,89 @@ END {
     exit 1
   }
 
-  yfile = out "/go2rtc.yaml"
-  printf "streams:\n" > yfile
-  for (i = 1; i <= nstreams; i++) printf "  %s: %s\n", sid[i], yq(surl[i]) > yfile
   if (nallow == 0) { for (i = 1; i <= ndefault_allow; i++) allow[++nallow] = default_allow[i] }
   allow_list = ""
   for (i = 1; i <= nallow; i++) allow_list = allow_list (i > 1 ? ", " : "") yq(allow[i])
+
+  for (i = 1; i <= ncams; i++) pick[i] = i
+  write_server(out, listen, static_dir, viewer, secret, allow_list, ":8555", ncams, 1)
+
+  nviews = 0
+  for (s = 1; s <= nsec; s++) {
+    vname = secname[s]
+    if (index(vname, "view:") != 1) continue
+    vshort = substr(vname, 6)
+    vwhere = "view \"" vshort "\""
+    if (vshort !~ /^[A-Za-z0-9_-]+$/) { err("invalid view name \"" vshort "\". Use letters, digits, \"_\" and \"-\"."); continue }
+    for (i = 1; i <= nkeys[vname]; i++) {
+      k = keys[vname, i]
+      if (!(k in view_key)) { err("line " vline[vname, k] ": unknown key \"" k "\" in [" vname "]"); continue }
+      if (get(vname, k) == "") { err("line " vline[vname, k] ": \"" k "\" has no value"); continue }
+    }
+    vlisten = has(vname, "listen") ? get(vname, "listen") : ""
+    if (vlisten == "") { err(vwhere " needs `listen`, for example \":8080\"."); continue }
+    if (vlisten == listen || (vlisten in used_listen)) { err(vwhere " listens on " vlisten ", which another server already uses."); continue }
+    used_listen[vlisten] = 1
+    vpass = has(vname, "password") ? get(vname, "password") : ""
+    if (vpass == "") { err(vwhere " needs `password`."); continue }
+    vuser = has(vname, "username") ? get(vname, "username") : "viewer"
+    vwebrtc = has(vname, "webrtc") ? get(vname, "webrtc") : sprintf(":%d", 8556 + nviews)
+    vallow = allow_list
+    if (has(vname, "allow_paths")) {
+      m = split(get(vname, "allow_paths"), raw, ",")
+      vallow = ""
+      for (i = 1; i <= m; i++) { c = trim(raw[i]); if (c != "") vallow = vallow (vallow == "" ? "" : ", ") yq(c) }
+    }
+    if (!has(vname, "cameras")) { err(vwhere " needs `cameras`, a comma separated list of camera names."); continue }
+    m = split(get(vname, "cameras"), raw, ",")
+    nsel = 0; missing = ""
+    for (i = 1; i <= m; i++) {
+      c = trim(raw[i]); if (c == "") continue
+      if (!(c in cam_index)) { missing = missing (missing == "" ? "" : ", ") c; continue }
+      pick[++nsel] = cam_index[c]
+    }
+    if (missing != "") { err(vwhere " names no such camera: " missing); continue }
+    if (nsel == 0) { err(vwhere " needs `cameras`, a comma separated list of camera names."); continue }
+    vdir = out "/views/" vshort
+    system("mkdir -p " vdir)
+    write_server(vdir, vlisten, "www", vuser, vpass, vallow, vwebrtc, nsel, 0)
+    view_names[++nviews] = vshort
+  }
+
+  if (nerr > 0) {
+    for (i = 1; i <= nerr; i++) printf "error: %s\n", errs[i] > "/dev/stderr"
+    printf "Wrote no files. Correct %d problem(s) in cameras.ini.\n", nerr > "/dev/stderr"
+    exit 1
+  }
+
+  vfile = out "/views.txt"
+  printf "" > vfile
+  for (i = 1; i <= nviews; i++) printf "%s\n", view_names[i] > vfile
+  close(vfile)
+}
+
+function write_server(dir, lst, sdir, usr, pwd, allows, wrtc, count, all,   i, j, k, idx, yfile, jfile, m, blocks, piece, pname, inner, kv, n2, b, x) {
+  yfile = dir "/go2rtc.yaml"
+  printf "streams:\n" > yfile
+  for (j = 1; j <= count; j++) {
+    idx = pick[j]
+    for (k = cam_first[idx]; k <= cam_last[idx]; k++) printf "  %s: %s\n", sid[k], yq(surl[k]) > yfile
+  }
   printf "api:\n" > yfile
-  printf "  listen: %s\n", yq(listen) > yfile
-  printf "  static_dir: %s\n", yq(static_dir) > yfile
-  printf "  allow_paths: [%s]\n", allow_list > yfile
-  printf "  username: %s\n", yq(viewer) > yfile
-  printf "  password: %s\n", yq(secret) > yfile
-  printf "webrtc:\n  listen: ':8555'\n  ice_servers: []\n" > yfile
+  printf "  listen: %s\n", yq(lst) > yfile
+  printf "  static_dir: %s\n", yq(sdir) > yfile
+  printf "  allow_paths: [%s]\n", allows > yfile
+  printf "  username: %s\n", yq(usr) > yfile
+  printf "  password: %s\n", yq(pwd) > yfile
+  printf "webrtc:\n  listen: %s\n  ice_servers: []\n", yq(wrtc) > yfile
   if (ncand > 0) { printf "  candidates:\n" > yfile; for (i = 1; i <= ncand; i++) printf "    - %s\n", yq(cand[i]) > yfile }
   close(yfile)
 
-  jfile = out "/cameras.json"
-  if (ncams == 0) { printf "{\n  \"cameras\": []\n}\n" > jfile; close(jfile); exit 0 }
+  jfile = dir "/cameras.json"
+  if (count == 0) { printf "{\n  \"cameras\": []\n}\n" > jfile; close(jfile); return }
   printf "{\n  \"cameras\": [\n" > jfile
-  for (i = 1; i <= ncams; i++) {
+  for (j = 1; j <= count; j++) {
+    i = pick[j]
     printf "    {\n      \"name\": %s,\n      \"label\": %s,\n", jq(cam_name[i]), jq(cam_label[i]) > jfile
     if (cam_route[i] != "") printf "      \"route\": %s,\n", jq(cam_route[i]) > jfile
     printf "      \"streams\": {\n" > jfile
@@ -248,7 +316,7 @@ END {
       for (x = 1; x <= n2; x++) printf "          %s%s\n", kv[x], (x < n2 ? "," : "") > jfile
       printf "        }%s\n", (b < m ? "," : "") > jfile
     }
-    printf "      }\n    }%s\n", (i < ncams ? "," : "") > jfile
+    printf "      }\n    }%s\n", (j < count ? "," : "") > jfile
   }
   printf "  ]\n}\n" > jfile
   close(jfile)

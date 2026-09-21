@@ -94,39 +94,43 @@ render() {
 # A LaunchDaemon, not a LaunchAgent, and it runs as root. macOS Local Network
 # privacy blocks every LAN connection of a process that runs as a normal user
 # from launchd, so an agent reaches no camera. root is exempt. See CLAUDE.md.
-plist_path() { printf '/Library/LaunchDaemons/%s.plist\n' "$LABEL"; }
+plist_path() { printf '/Library/LaunchDaemons/%s.plist\n' "$(label_for "${1:-}")"; }
 domain() { printf 'system\n'; }
 
 # `launchctl bootstrap system` fails with "Load failed: 5: Input/output error"
 # when it runs from a user's terminal. The legacy loader still works.
 load_macos() {
-  sudo launchctl bootstrap system "$(plist_path)" 2>/dev/null ||
-    sudo launchctl load -w "$(plist_path)"
+  sudo launchctl bootstrap system "$(plist_path "${1:-}")" 2>/dev/null ||
+    sudo launchctl load -w "$(plist_path "${1:-}")"
 }
 
 start_macos() {
-  [ -f "$(plist_path)" ] || die "the service is not installed. Run: ipcam install"
-  load_macos
+  [ -f "$(plist_path "${1:-}")" ] || die "the service is not installed. Run: ipcam install"
+  load_macos "${1:-}"
 }
 stop_macos() {
-  sudo launchctl bootout "system/$LABEL" 2>/dev/null ||
-    sudo launchctl unload "$(plist_path)" 2>/dev/null || true
+  sudo launchctl bootout "system/$(label_for "${1:-}")" 2>/dev/null ||
+    sudo launchctl unload "$(plist_path "${1:-}")" 2>/dev/null || true
 }
 
 install_macos() {
+  instance=${1:-}
   tmp=$(mktemp) || die "could not write a temporary file"
-  render "$BUNDLE_DIR/service/launchd.plist" > "$tmp"
-  stop_macos
-  sudo install -o root -g wheel -m 644 "$tmp" "$(plist_path)"
+  sed -e "s#{{BUNDLE_DIR}}#$(dir_for "$instance")#g" \
+      -e "s#{{BINARY}}#$BUNDLE_DIR/go2rtc#g" \
+      -e "s#{{LABEL}}#$(label_for "$instance")#g" \
+      -e "s#{{USER}}#$(id -un)#g" "$BUNDLE_DIR/service/launchd.plist" > "$tmp"
+  stop_macos "$instance"
+  sudo install -o root -g wheel -m 644 "$tmp" "$(plist_path "$instance")"
   rm -f "$tmp"
-  load_macos
+  load_macos "$instance"
 }
 
-uninstall_macos() { stop_macos; sudo rm -f "$(plist_path)"; }
+uninstall_macos() { stop_macos "${1:-}"; sudo rm -f "$(plist_path "${1:-}")"; }
 
 state_macos() {
-  info=$(launchctl print "$(domain)/$LABEL" 2>/dev/null) || {
-    if [ -f "$(plist_path)" ]; then printf 'installed, stopped\n'; else printf 'not installed\n'; fi
+  info=$(launchctl print "$(domain)/$(label_for "${1:-}")" 2>/dev/null) || {
+    if [ -f "$(plist_path "${1:-}")" ]; then printf 'installed, stopped\n'; else printf 'not installed\n'; fi
     return
   }
   state=$(printf '%s\n' "$info" | sed -n 's/^[[:space:]]*state = //p' | head -1)
@@ -136,28 +140,38 @@ state_macos() {
 
 # root owns the log, because the daemon runs as root.
 logs_macos() {
-  [ -f "$LOG" ] || die "no log file at $LOG"
-  if [ -r "$LOG" ]; then tail -n 50 -f "$LOG"; else sudo tail -n 50 -f "$LOG"; fi
+  target=$LOG
+  [ -n "${1:-}" ] && target="$BUNDLE_DIR/views/$1/go2rtc.log"
+  [ -f "$target" ] || die "no log file at $target"
+  if [ -r "$target" ]; then tail -n 50 -f "$target"; else sudo tail -n 50 -f "$target"; fi
 }
 
-unit_path() { printf '/etc/systemd/system/%s.service\n' "$UNIT_NAME"; }
-start_linux() { sudo systemctl start "$UNIT_NAME"; }
-stop_linux() { sudo systemctl stop "$UNIT_NAME" 2>/dev/null || true; }
+unit_name_for() {
+  if [ -z "${1:-}" ]; then printf '%s\n' "$UNIT_NAME"; else printf '%s-%s\n' "$UNIT_NAME" "$1"; fi
+}
+unit_path() { printf '/etc/systemd/system/%s.service\n' "$(unit_name_for "${1:-}")"; }
+start_linux() { sudo systemctl start "$(unit_name_for "${1:-}")"; }
+stop_linux() { sudo systemctl stop "$(unit_name_for "${1:-}")" 2>/dev/null || true; }
 
 install_linux() {
-  render "$BUNDLE_DIR/service/systemd.service" | sudo tee "$(unit_path)" >/dev/null
+  instance=${1:-}
+  sed -e "s#{{BUNDLE_DIR}}#$(dir_for "$instance")#g" \
+      -e "s#{{BINARY}}#$BUNDLE_DIR/go2rtc#g" \
+      -e "s#{{LABEL}}#$(label_for "$instance")#g" \
+      -e "s#{{USER}}#$(id -un)#g" "$BUNDLE_DIR/service/systemd.service" |
+    sudo tee "$(unit_path "$instance")" >/dev/null
   sudo systemctl daemon-reload
-  sudo systemctl enable --now "$UNIT_NAME"
+  sudo systemctl enable --now "$(unit_name_for "$instance")"
 }
 
 uninstall_linux() {
-  sudo systemctl disable --now "$UNIT_NAME" 2>/dev/null || true
-  sudo rm -f "$(unit_path)"
+  sudo systemctl disable --now "$(unit_name_for "${1:-}")" 2>/dev/null || true
+  sudo rm -f "$(unit_path "${1:-}")"
   sudo systemctl daemon-reload
 }
 
 state_linux() {
-  systemctl is-active "$UNIT_NAME" 2>/dev/null | head -1 || printf 'not installed\n'
+  systemctl is-active "$(unit_name_for "${1:-}")" 2>/dev/null | head -1 || printf 'not installed\n'
 }
 
 logs_linux() { journalctl -u "$UNIT_NAME" -n 50 -f; }
@@ -212,6 +226,11 @@ build_info() {
   printf '%s\n' "$value"
 }
 
+install_instance() { "install_$OS" "$1"; }
+start_instance() { "start_$OS" "$1"; }
+stop_instance() { "stop_$OS" "$1"; }
+uninstall_instance() { "uninstall_$OS" "$1"; }
+
 cmd_install() {
   link=yes
   for argument in "$@"; do
@@ -222,7 +241,7 @@ cmd_install() {
   done
   require_bundle
   allow_unsigned_binary
-  "install_$OS"
+  for_each_instance install_instance
   [ "$link" = yes ] && do_link || true
   if code=$(wait_for_http); then
     echo "Service running. HTTP $code"
@@ -233,23 +252,29 @@ cmd_install() {
   fi
 }
 
-cmd_uninstall() { "uninstall_$OS"; do_unlink; echo "Service removed."; }
+cmd_uninstall() { for_each_instance uninstall_instance; do_unlink; echo "Service removed."; }
 
 cmd_start() {
-  require_bundle; allow_unsigned_binary; "start_$OS"
+  require_bundle; allow_unsigned_binary; for_each_instance start_instance
   if code=$(wait_for_http); then echo "Service running. HTTP $code"; else report_start_failure; exit 1; fi
 }
 
-cmd_stop() { "stop_$OS"; echo "Service stopped."; }
+cmd_stop() { for_each_instance stop_instance; echo "Service stopped."; }
 
 cmd_restart() {
-  require_bundle; allow_unsigned_binary; "stop_$OS"; "start_$OS"
+  require_bundle; allow_unsigned_binary
+  for_each_instance stop_instance
+  for_each_instance start_instance
   if code=$(wait_for_http); then echo "Service running. HTTP $code"; else report_start_failure; exit 1; fi
+}
+
+view_port() {
+  sed -n 's/^  listen: //p' "$BUNDLE_DIR/views/$1/go2rtc.yaml" 2>/dev/null | head -1 | tr -d "'" | sed 's/.*://'
 }
 
 cmd_status() {
   echo "Bundle:  $BUNDLE_DIR"
-  echo "Service: $("state_$OS")"
+  echo "Service: $("state_$OS" "")"
   code=$(http_code)
   case $code in
     000) echo "HTTP:    no answer on port $(listen_port)" ;;
@@ -257,6 +282,13 @@ cmd_status() {
   esac
   echo "URL:     $(base_url)"
   echo "User:    $(viewer_user)"
+  for view in $(views_list); do
+    [ -n "$view" ] || continue
+    port=$(view_port "$view")
+    vcode=$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/" 2>/dev/null || printf '000')
+    user=$(sed -n 's/^  username: //p' "$BUNDLE_DIR/views/$view/go2rtc.yaml" | head -1 | tr -d "'")
+    printf 'View %s: %s, http://%s:%s/ as %s, HTTP %s\n' "$view" "$("state_$OS" "$view")" "$(lan_address)" "$port" "$user" "$vcode"
+  done
   if [ -L "$LINK_PATH" ]; then echo "Command: $LINK_PATH"; else echo "Command: not linked. Run: ipcam link"; fi
 }
 
@@ -417,6 +449,15 @@ service_is_this_bundle() {
   fi
 }
 
+for_each_instance() {
+  action=$1
+  "$action" ""
+  for view in $(views_list); do
+    [ -n "$view" ] || continue
+    "$action" "$view"
+  done
+}
+
 existing_api_value() {
   [ -f "$CONFIG" ] || return 1
   value=$(yaml_value "$1")
@@ -440,12 +481,15 @@ existing_server_value() {
   existing_api_value "$1"
 }
 
-sync_routes() {
-  www="$BUNDLE_DIR/www"
+sync_routes() { sync_routes_in "$BUNDLE_DIR/www" "$BUNDLE_DIR/cameras.json"; }
+
+sync_routes_in() {
+  www=$1
+  manifest=$2
   [ -d "$www" ] && [ -f "$www/index.html" ] || return 0
   marker="$www/.routes"
 
-  wanted=$(sed -n 's/.*"route": "\([^"]*\)".*/\1/p' "$BUNDLE_DIR/cameras.json" 2>/dev/null)
+  wanted=$(sed -n 's/.*"route": "\([^"]*\)".*/\1/p' "$manifest" 2>/dev/null)
 
   if [ -f "$marker" ]; then
     while IFS= read -r stale; do
@@ -464,7 +508,41 @@ sync_routes() {
     printf '%s\n' "$route" >> "$marker"
     count=$((count + 1))
   done
-  [ "$count" -gt 0 ] && echo "Routes: $(printf '/%s ' $wanted)"
+  return 0
+}
+
+views_list() {
+  [ -f "$BUNDLE_DIR/views.txt" ] || return 0
+  cat "$BUNDLE_DIR/views.txt"
+}
+
+label_for() {
+  if [ -z "$1" ]; then printf '%s\n' "$LABEL"; else printf '%s.%s\n' "$LABEL" "$1"; fi
+}
+
+dir_for() {
+  if [ -z "$1" ]; then printf '%s\n' "$BUNDLE_DIR"; else printf '%s/views/%s\n' "$BUNDLE_DIR" "$1"; fi
+}
+
+sync_view_static() {
+  www="$BUNDLE_DIR/www"
+  [ -d "$www" ] || return 0
+  for view in $(views_list); do
+    [ -n "$view" ] || continue
+    target="$BUNDLE_DIR/views/$view/www"
+    mkdir -p "$target"
+    for entry in "$www"/*; do
+      name=$(basename "$entry")
+      case $name in
+        cameras.json|.routes) continue ;;
+      esac
+      [ -d "$entry" ] && [ "$name" != assets ] && continue
+      rm -rf "$target/$name"
+      cp -R "$entry" "$target/$name"
+    done
+    cp "$BUNDLE_DIR/views/$view/cameras.json" "$target/cameras.json"
+    sync_routes_in "$target" "$BUNDLE_DIR/views/$view/cameras.json"
+  done
   return 0
 }
 
@@ -475,6 +553,10 @@ render_config() {
     || die "cameras.ini has problems. Fix them and run this again."
   if [ -d "$BUNDLE_DIR/www" ]; then cp "$BUNDLE_DIR/cameras.json" "$BUNDLE_DIR/www/cameras.json"; fi
   sync_routes
+  sync_view_static
+  for view in $(views_list); do
+    [ -n "$view" ] && echo "View $view: $(cd "$BUNDLE_DIR/views/$view" && sed -n 's/^  listen: //p' go2rtc.yaml | head -1 | tr -d "'")"
+  done
   return 0
 }
 
@@ -691,7 +773,7 @@ Usage: ipcam <command> [options]
   stop                 Stop the service
   restart              Restart the service
   status               Show the service state, the URL and the link
-  logs                 Follow the service log
+  logs [view]          Follow the service log, or a view's log
   url                  Print the address and the viewer user name
   update [--build]     Regenerate the config from cameras.ini, then restart.
                        --build also rebuilds the page. It needs the repository.
@@ -726,7 +808,7 @@ case $command_name in
   stop) cmd_stop ;;
   restart) cmd_restart ;;
   status) cmd_status ;;
-  logs) "logs_$OS" ;;
+  logs) "logs_$OS" "${1:-}" ;;
   url) cmd_url ;;
   update) cmd_update "$@" ;;
   discover) cmd_discover "$@" ;;

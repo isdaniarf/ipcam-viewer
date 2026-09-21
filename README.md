@@ -217,7 +217,7 @@ The command then works from anywhere.
 | `ipcam install [--no-link]` | Install the service, start it, and link the command |
 | `ipcam start`, `ipcam stop`, `ipcam restart` | Control the service |
 | `ipcam status` | Show the state, the pid, the URL and the link |
-| `ipcam logs` | Follow the service log |
+| `ipcam logs [view]` | Follow the service log, or one view's log |
 | `ipcam url` | Print the address and the viewer user name |
 | `ipcam update [--build]` | Regenerate the config from `cameras.ini`, then restart |
 | `ipcam discover [--apply\|--replace\|--deep]` | Scan the network and merge what it finds into `cameras.ini`. It applies nothing unless you pass `--apply` |
@@ -286,6 +286,36 @@ number, so a typo cannot pass silently.
 | `route` | no | — | A path that opens this camera alone, for example `hallway` gives `/hallway`. |
 | `username` | for RTSP and ONVIF | — | The camera account. A protocol key can override it. |
 | `password` | for RTSP and ONVIF | — | The camera password. A protocol key can override it. |
+
+### Give some people only some cameras
+
+A view is a second server with its own port, its own login and its own cameras:
+
+```ini
+[view:guest]
+listen = :8080
+username = guest
+password = guest_password
+cameras = hallway, house_front
+```
+
+Guests open `http://<host>:8080/` and see those two cameras. The other cameras are not merely hidden
+from the page, they are absent from that server, so asking it for one returns nothing at all.
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `listen` | yes | — | The address and port. It must differ from every other server. |
+| `password` | yes | — | The password for this view. |
+| `cameras` | yes | — | The camera names this view may show, comma separated. |
+| `username` | no | `viewer` | The user name for this view. |
+| `webrtc` | no | `:8556`, then `:8557` | The WebRTC port. Each server needs its own. |
+| `allow_paths` | no | The standard list | As for `[server]`. |
+
+`ipcam install`, `start`, `stop`, `restart` and `uninstall` cover every view as well as the main
+server. `ipcam status` lists each one, and `ipcam logs <view>` follows a single view's log.
+
+Each view opens its own connection to a shared camera, and most cameras allow only two or three at
+once, so avoid putting the same camera in many views that people watch at the same time.
 
 ### What the server exposes
 

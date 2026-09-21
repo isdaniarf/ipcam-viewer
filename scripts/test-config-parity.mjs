@@ -99,6 +99,45 @@ username = u
 password = p
 rtsp.path = /s1
 `,
+  views: `
+[server]
+listen = :80
+username = owner
+password = ownerpw
+
+[view:guest]
+listen = :8080
+username = guest
+password = guestpw
+cameras = hallway, gate
+
+[view:kitchen_only]
+listen = :8081
+password = kpw
+cameras = gate
+webrtc = :8600
+allow_paths = /, /assets, /cameras.json, /api/ws
+
+[hallway]
+route = hallway
+host = 10.0.0.1
+username = u
+password = p
+rtsp.path = /s1
+rtsp.sub_path = /s2
+
+[bedroom]
+host = 10.0.0.2
+username = u
+password = p
+rtsp.path = /s1
+
+[gate]
+host = 10.0.0.3
+username = u
+password = p
+onvif.port = 2020
+`,
   allow_paths_override: `
 [server]
 password = x
@@ -162,6 +201,12 @@ const invalid = {
   route_with_space: "[server]\npassword = x\n[cam]\nroute = has space\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
   route_with_dot: "[server]\npassword = x\n[cam]\nroute = a.b\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
   route_reserved: "[server]\npassword = x\n[cam]\nroute = api\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
+  view_unknown_camera: "[server]\npassword = x\n[view:g]\nlisten = :8080\npassword = p\ncameras = nope\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
+  view_no_password: "[server]\npassword = x\n[view:g]\nlisten = :8080\ncameras = cam\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
+  view_no_listen: "[server]\npassword = x\n[view:g]\npassword = p\ncameras = cam\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
+  view_port_clash: "[server]\nlisten = :80\npassword = x\n[view:g]\nlisten = :80\npassword = p\ncameras = cam\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
+  view_unknown_key: "[server]\npassword = x\n[view:g]\nlisten = :8080\npassword = p\ncameras = cam\nbogus = 1\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
+  view_bad_name: "[server]\npassword = x\n[view:bad name]\nlisten = :8080\npassword = p\ncameras = cam\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
   route_duplicate: "[server]\npassword = x\n[a]\nroute = same\nhost = h1\nusername = u\npassword = p\nrtsp.path = /s\n[b]\nroute = same\nhost = h2\nusername = u\npassword = p\nrtsp.path = /s\n",
   missing_camera_password: "[server]\npassword = x\n[cam]\nhost = h\nusername = u\nrtsp.path = /s\n",
 };
@@ -209,7 +254,18 @@ for (const [name, text] of Object.entries(valid)) {
   if (!js.ok) { report("valid", name, `javascript rejected it: ${js.problems.join(" | ")}`); continue; }
   if (!awk.ok) { report("valid", name, `awk rejected it: ${awk.stderr.trim()}`); continue; }
 
-  for (const file of ["go2rtc.yaml", "cameras.json"]) {
+  const files = ["go2rtc.yaml", "cameras.json"];
+  if (existsSync(join(jsOut, "views.txt"))) {
+    files.push("views.txt");
+    for (const view of readFileSync(join(jsOut, "views.txt"), "utf-8").split("\n").filter(Boolean)) {
+      files.push(`views/${view}/go2rtc.yaml`, `views/${view}/cameras.json`);
+    }
+  }
+  for (const file of files) {
+    if (!existsSync(join(jsOut, file)) || !existsSync(join(awkOut, file))) {
+      report("valid", name, `${file} missing from ${existsSync(join(jsOut, file)) ? "awk" : "javascript"}`);
+      continue;
+    }
     const a = readFileSync(join(jsOut, file), "utf-8");
     const b = readFileSync(join(awkOut, file), "utf-8");
     if (a !== b) {
