@@ -93,6 +93,13 @@ for item in "$SCRATCH"/*; do
   mv "$item" "$PREFIX/$name"
 done
 
+# A release archive ships no config, so the www/ that just replaced the old one
+# holds no cameras.json. Put the preserved manifest back, or the page loads and
+# then reports "The camera list did not load: HTTP 404".
+if [ -f "$PREFIX/cameras.json" ] && [ -d "$PREFIX/www" ]; then
+  cp "$PREFIX/cameras.json" "$PREFIX/www/cameras.json"
+fi
+
 if [ "$(uname -s)" = Darwin ]; then
   xattr -d com.apple.quarantine "$PREFIX/go2rtc" 2>/dev/null || true
   xattr -d com.apple.quarantine "$PREFIX/ipcam" 2>/dev/null || true
