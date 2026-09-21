@@ -225,6 +225,10 @@ It accepts a comma-separated list.
   generator in discover). Both scan paths reuse an existing `[server]` block rather than replacing it:
   the shell path via `existing_server_value`, the `--deep` path via `--keep-server`, which the CLI
   points at a copy of the old file before it is replaced.
+- `cmd_update` and `cmd_install` call `prune_instances` then `for_each_instance ensure_instance`, so
+  adding a view to `cameras.ini` installs its service and deleting one removes it; `installed_instances`
+  finds them by scanning for `io.ipcam-viewer.go2rtc.<view>.plist` / `ipcam-viewer-<view>.service`.
+  Loopback skips auth unless `local_auth: true`, so test credential separation over the LAN or set it.
 - `[view:<name>]` sections make extra go2rtc instances, which is the only real per-camera access
   control: a view's config holds only its own streams, so `/api/ws?src=other` returns nothing there.
   Verified live: guest 37 KB for its camera, 0 bytes for one outside the view, owner 90 KB for the same.

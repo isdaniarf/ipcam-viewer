@@ -314,6 +314,12 @@ from the page, they are absent from that server, so asking it for one returns no
 `ipcam install`, `start`, `stop`, `restart` and `uninstall` cover every view as well as the main
 server. `ipcam status` lists each one, and `ipcam logs <view>` follows a single view's log.
 
+Add or remove a view in `cameras.ini`, then run `ipcam update`. It installs the service for a new
+view and removes the one for a view you deleted.
+
+The admin and the guest are separate logins on separate ports. The guest password is refused on the
+admin port and the reverse, which you can check with `curl -u`. Guests use `http://<host>:8080/`.
+
 Each view opens its own connection to a shared camera, and most cameras allow only two or three at
 once, so avoid putting the same camera in many views that people watch at the same time.
 

@@ -243,6 +243,7 @@ cmd_install() {
   done
   require_bundle
   allow_unsigned_binary
+  prune_instances
   for_each_instance install_instance
   [ "$link" = yes ] && do_link || true
   if code=$(wait_for_http); then
@@ -254,7 +255,14 @@ cmd_install() {
   fi
 }
 
-cmd_uninstall() { for_each_instance uninstall_instance; do_unlink; echo "Service removed."; }
+cmd_uninstall() {
+  for_each_instance uninstall_instance
+  for old_view in $(installed_instances); do
+    [ -n "$old_view" ] && "uninstall_$OS" "$old_view"
+  done
+  do_unlink
+  echo "Service removed."
+}
 
 cmd_start() {
   require_bundle; allow_unsigned_binary; for_each_instance start_instance
@@ -321,6 +329,8 @@ cmd_update() {
   fi
 
   if service_is_this_bundle; then
+    prune_instances
+    for_each_instance ensure_instance
     cmd_restart
   else
     echo "Next: ipcam install"
@@ -464,6 +474,36 @@ service_is_this_bundle() {
     [ -f "$(unit_path)" ] || return 1
     grep -q "$BUNDLE_DIR/go2rtc" "$(unit_path)" 2>/dev/null
   fi
+}
+
+installed_instances() {
+  if [ "$OS" = macos ]; then
+    ls /Library/LaunchDaemons 2>/dev/null | sed -n "s/^${LABEL}\.\([A-Za-z0-9_-]*\)\.plist$/\1/p"
+  else
+    ls /etc/systemd/system 2>/dev/null | sed -n "s/^${UNIT_NAME}-\([A-Za-z0-9_-]*\)\.service$/\1/p"
+  fi
+}
+
+ensure_instance() {
+  instance=$1
+  if [ "$OS" = macos ]; then
+    [ -f "$(plist_path "$instance")" ] && return 0
+  else
+    [ -f "$(unit_path "$instance")" ] && return 0
+  fi
+  echo "Installing the service for ${instance:-the main server}"
+  "install_$OS" "$instance"
+}
+
+prune_instances() {
+  current=$(views_list)
+  for old_view in $(installed_instances); do
+    [ -n "$old_view" ] || continue
+    printf '%s\n' "$current" | grep -qx "$old_view" && continue
+    echo "Removing the service for the view $old_view, which the config no longer names"
+    "uninstall_$OS" "$old_view"
+  done
+  return 0
 }
 
 for_each_instance() {
