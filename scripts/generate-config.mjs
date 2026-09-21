@@ -148,6 +148,7 @@ function writeView({ view, cameras, outDir, staticDirPath, candidates, warnings,
     },
     candidates,
     webrtcListen: view.webrtc,
+    rtspListen: "",
   });
   writeFileSync(resolve(dir, "go2rtc.yaml"), emitGo2rtcYaml(config));
 

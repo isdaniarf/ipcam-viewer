@@ -180,10 +180,14 @@ export function buildServer(server, errors) {
   return { listen: String(listen), username: String(username), password, allowPaths };
 }
 
-export function buildGo2rtcConfig({ streams, api, candidates, webrtcListen }) {
+// `rtspListen` is "" for a view. Every go2rtc falls back to :8554 when the
+// config names no RTSP port, so two servers on one host race for it and the
+// loser logs "bind: address already in use". A view serves a browser and needs
+// no RTSP server of its own, so it turns the listener off instead.
+export function buildGo2rtcConfig({ streams, api, candidates, webrtcListen, rtspListen }) {
   const webrtc = { listen: webrtcListen ?? ":8555", ice_servers: [] };
   if (candidates && candidates.length > 0) webrtc.candidates = candidates;
-  return { streams, api, webrtc };
+  return { streams, api, rtsp: { listen: rtspListen ?? ":8554" }, webrtc };
 }
 
 export function manifestJson(manifest) {
@@ -437,6 +441,8 @@ export function emitGo2rtcYaml(config) {
       lines.push(`  ${key}: ${yamlQuote(value)}`);
     }
   }
+  lines.push("rtsp:");
+  lines.push(`  listen: ${yamlQuote(config.rtsp.listen)}`);
   lines.push("webrtc:");
   lines.push(`  listen: ${yamlQuote(config.webrtc.listen)}`);
   lines.push("  ice_servers: []");

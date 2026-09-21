@@ -241,7 +241,7 @@ END {
   used_webrtc["8555"] = 1
 
   for (i = 1; i <= ncams; i++) pick[i] = i
-  write_server(out, proxy_on ? loopback(listen) : listen, static_dir, viewer, secret, allow_list, ":8555", ncams, 1)
+  write_server(out, proxy_on ? loopback(listen) : listen, static_dir, viewer, secret, allow_list, ":8555", ":8554", ncams, 1)
   if (proxy_on) { nacct = 0; add_account(viewer, secret, loopback(listen)) }
 
   nviews = 0
@@ -287,7 +287,7 @@ END {
     if (nsel == 0) { err(vwhere " needs `cameras`, a comma separated list of camera names."); continue }
     vdir = out "/views/" vshort
     system("mkdir -p " vdir)
-    write_server(vdir, proxy_on ? loopback(vlisten) : vlisten, "www", vuser, vpass, vallow, vwebrtc, nsel, 0)
+    write_server(vdir, proxy_on ? loopback(vlisten) : vlisten, "www", vuser, vpass, vallow, vwebrtc, "", nsel, 0)
     if (proxy_on) add_account(vuser, vpass, loopback(vlisten))
     view_names[++nviews] = vshort
   }
@@ -330,7 +330,7 @@ function add_account(user, pass, backend,   port) {
   acct_backend[nacct] = backend
 }
 
-function write_server(dir, lst, sdir, usr, pwd, allows, wrtc, count, all,   i, j, k, idx, yfile, jfile, m, blocks, piece, pname, inner, kv, n2, b, x) {
+function write_server(dir, lst, sdir, usr, pwd, allows, wrtc, rtspl, count, all,   i, j, k, idx, yfile, jfile, m, blocks, piece, pname, inner, kv, n2, b, x) {
   yfile = dir "/go2rtc.yaml"
   printf "streams:\n" > yfile
   for (j = 1; j <= count; j++) {
@@ -343,6 +343,7 @@ function write_server(dir, lst, sdir, usr, pwd, allows, wrtc, count, all,   i, j
   printf "  allow_paths: [%s]\n", allows > yfile
   printf "  username: %s\n", yq(usr) > yfile
   printf "  password: %s\n", yq(pwd) > yfile
+  printf "rtsp:\n  listen: %s\n", yq(rtspl) > yfile
   printf "webrtc:\n  listen: %s\n  ice_servers: []\n", yq(wrtc) > yfile
   if (ncand > 0) { printf "  candidates:\n" > yfile; for (i = 1; i <= ncand; i++) printf "    - %s\n", yq(cand[i]) > yfile }
   close(yfile)

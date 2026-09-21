@@ -235,6 +235,12 @@ It accepts a comma-separated list.
   serving, and silently falls back to MSE, which is very hard to diagnose. The proxy never carries
   WebRTC media: it holds one TCP socket and no UDP, while go2rtc holds the UDP media ports on every
   interface, so media always goes browser to go2rtc directly.
+- Every generated config names an RTSP port, because go2rtc falls back to `:8554` when none is given
+  and two instances on one host then race for it. The main server takes `:8554`; a view writes
+  `rtsp: listen: ''`, which turns the listener off, because a view only feeds a browser. Without this
+  the loser of the race logs `[rtsp] listen error="listen tcp :8554: bind: address already in use"` on
+  every start, and which instance loses changes from start to start. Verified: an empty `listen` starts
+  clean with no RTSP line and no error, and the two servers then run together without a collision.
 - `[proxy]` puts every server behind one port. `proxy/main.go` (~130 lines, no deps) reads
   `proxy.conf`, checks Basic auth, strips the header and forwards to that user's backend with
   `httputil.ReverseProxy`, which handles the WebSocket upgrade. With `[proxy]` present every go2rtc
