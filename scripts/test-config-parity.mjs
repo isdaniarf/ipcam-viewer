@@ -138,6 +138,40 @@ username = u
 password = p
 onvif.port = 2020
 `,
+  proxy_tls: `
+[proxy]
+listen = :80
+tls_listen = :443
+
+[server]
+listen = :8081
+username = admin
+password = adminpw
+
+[cam]
+host = 10.0.0.9
+username = u
+password = p
+rtsp.path = /s
+`,
+  proxy_tls_paths: `
+[proxy]
+listen = :80
+tls_listen = :8443
+tls_cert = /etc/ipcam/cert.pem
+tls_key = /etc/ipcam/key.pem
+
+[server]
+listen = :8081
+username = admin
+password = adminpw
+
+[cam]
+host = 10.0.0.9
+username = u
+password = p
+rtsp.path = /s
+`,
   proxy: `
 [proxy]
 listen = :80
@@ -239,6 +273,7 @@ const invalid = {
   view_webrtc_hits_default: "[server]\nlisten = :8081\nusername = a\npassword = b\n[view:x]\nlisten = :8082\npassword = c\ncameras = cam\nwebrtc = :8555\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
   proxy_same_user: "[proxy]\nlisten = :80\n[server]\nlisten = :8081\nusername = same\npassword = a\n[view:g]\nlisten = :8082\nusername = same\npassword = b\ncameras = cam\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
   proxy_port_clash: "[proxy]\nlisten = :8081\n[server]\nlisten = :8081\nusername = a\npassword = a\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
+  proxy_tls_unknown: "[proxy]\nlisten = :80\ntls_bogus = x\n[server]\npassword = a\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
   proxy_unknown_key: "[proxy]\nlisten = :80\nbogus = 1\n[server]\npassword = a\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
   view_bad_name: "[server]\npassword = x\n[view:bad name]\nlisten = :8080\npassword = p\ncameras = cam\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
   route_duplicate: "[server]\npassword = x\n[a]\nroute = same\nhost = h1\nusername = u\npassword = p\nrtsp.path = /s\n[b]\nroute = same\nhost = h2\nusername = u\npassword = p\nrtsp.path = /s\n",

@@ -6,7 +6,7 @@ export const DEFAULT_ALLOW_PATHS = ["/", "/assets", "/cameras.json", "/api/ws", 
 export const VIEW_PREFIX = "view:";
 export const VIEW_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 const VIEW_KEYS = new Set(["listen", "username", "password", "cameras", "webrtc", "allow_paths"]);
-const PROXY_KEYS = new Set(["listen", "realm"]);
+const PROXY_KEYS = new Set(["listen", "realm", "tls_listen", "tls_cert", "tls_key"]);
 export const LOOPBACK = "127.0.0.1";
 
 export function toLabel(name) {
@@ -328,6 +328,10 @@ export function buildProxy(proxy, mainServer, views, errors) {
   if (!proxy) return null;
   const listen = proxy.listen ?? ":80";
   const realm = proxy.realm ?? "IP Camera Viewer";
+  // Relative by design: the service sets the working directory to the bundle.
+  const tlsListen = proxy.tls_listen ?? "";
+  const tlsCert = proxy.tls_cert ?? "tls/server.crt";
+  const tlsKey = proxy.tls_key ?? "tls/server.key";
   const proxyPort = String(listen).split(":").pop();
 
   const accounts = [
@@ -348,11 +352,14 @@ export function buildProxy(proxy, mainServer, views, errors) {
     }
   }
 
-  return { listen, realm, accounts };
+  return { listen, realm, accounts, tlsListen, tlsCert, tlsKey };
 }
 
 export function emitProxyConfig(proxy) {
   const lines = [`listen ${proxy.listen}`, `realm ${proxy.realm}`];
+  if (proxy.tlsListen) {
+    lines.push(`tls_listen ${proxy.tlsListen}`, `tls_cert ${proxy.tlsCert}`, `tls_key ${proxy.tlsKey}`);
+  }
   for (const account of proxy.accounts) {
     lines.push(`user ${account.user} ${account.password} http://${account.backend}`);
   }

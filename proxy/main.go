@@ -9,6 +9,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/base64"
 	"flag"
 	"fmt"
@@ -30,10 +31,13 @@ type account struct {
 }
 
 type config struct {
-	listen   string
-	realm    string
-	accounts map[string]*account
-	key      []byte
+	listen    string
+	realm     string
+	accounts  map[string]*account
+	key       []byte
+	tlsListen string
+	tlsCert   string
+	tlsKey    string
 }
 
 // A browser does not reliably attach cached Basic credentials to a WebSocket
@@ -138,6 +142,18 @@ func readConfig(path string) (*config, error) {
 				return nil, fmt.Errorf("line %d: realm takes a name", line)
 			}
 			cfg.realm = strings.Join(fields[1:], " ")
+		case "tls_listen", "tls_cert", "tls_key":
+			if len(fields) != 2 {
+				return nil, fmt.Errorf("line %d: %s takes one value", line, fields[0])
+			}
+			switch fields[0] {
+			case "tls_listen":
+				cfg.tlsListen = fields[1]
+			case "tls_cert":
+				cfg.tlsCert = fields[1]
+			case "tls_key":
+				cfg.tlsKey = fields[1]
+			}
 		case "user":
 			if len(fields) != 4 {
 				return nil, fmt.Errorf("line %d: user takes a name, a password and a backend", line)
@@ -163,6 +179,9 @@ func readConfig(path string) (*config, error) {
 	}
 	if len(cfg.accounts) == 0 {
 		return nil, fmt.Errorf("%s names no user", path)
+	}
+	if cfg.tlsListen != "" && (cfg.tlsCert == "" || cfg.tlsKey == "") {
+		return nil, fmt.Errorf("%s sets tls_listen but no tls_cert and tls_key", path)
 	}
 	cfg.key = deriveKey(cfg.accounts)
 	return cfg, nil
@@ -216,6 +235,28 @@ func main() {
 	sort.Strings(names)
 	for _, name := range names {
 		log.Printf("ipcam-proxy: %s -> %s", name, cfg.accounts[name].backend)
+	}
+
+	handler := cfg.handler()
+
+	// Plain HTTP keeps serving alongside TLS. Dropping it would strand every
+	// device that has not trusted the local CA yet, and the LAN and tailnet
+	// addresses already in use.
+	if cfg.tlsListen != "" {
+		log.Printf("ipcam-proxy: listening on %s (https)", cfg.tlsListen)
+		go func() {
+			secure := &http.Server{
+				Addr:    cfg.tlsListen,
+				Handler: handler,
+				// HTTP/2 has no Connection: Upgrade, so a WebSocket handshake
+				// over it answers 400 and the player never gets a stream. Go
+				// enables HTTP/2 on a TLS server by default and browsers accept
+				// it, so the whole page would load and no video would play. An
+				// empty, non-nil TLSNextProto keeps this listener on HTTP/1.1.
+				TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){},
+			}
+			log.Fatal(secure.ListenAndServeTLS(cfg.tlsCert, cfg.tlsKey))
+		}()
 	}
 
 	log.Printf("ipcam-proxy: listening on %s", cfg.listen)

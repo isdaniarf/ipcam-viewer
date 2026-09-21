@@ -845,6 +845,63 @@ cmd_discover() {
   fi
 }
 
+lan_addresses() {
+  if [ "$OS" = macos ]; then
+    ifconfig 2>/dev/null | awk '/inet / && $2 != "127.0.0.1" { print $2 }'
+  else
+    ip -4 addr show 2>/dev/null | awk '/inet /{ split($2, a, "/"); if (a[1] != "127.0.0.1") print a[1] }'
+  fi
+}
+
+# Apple refuses a TLS certificate valid for more than 398 days, so the leaf
+# lasts 397. The CA lasts ten years, because every device has to trust it once.
+cmd_cert() {
+  command -v openssl >/dev/null 2>&1 || die "openssl is not installed"
+  dir="$BUNDLE_DIR/tls"
+  mkdir -p "$dir"
+  host=$(hostname -s 2>/dev/null || echo ipcam)
+  names="DNS:$host.local,DNS:$host,DNS:localhost,IP:127.0.0.1"
+  for address in $(lan_addresses); do names="$names,IP:$address"; done
+
+  if [ -f "$dir/ca.crt" ] && [ -f "$dir/ca.key" ]; then
+    echo "Keeping the existing CA in $dir/ca.crt"
+  else
+    openssl ecparam -name prime256v1 -genkey -noout -out "$dir/ca.key" 2>/dev/null ||
+      die "could not create the CA key"
+    openssl req -x509 -new -key "$dir/ca.key" -sha256 -days 3650 -out "$dir/ca.crt" \
+      -subj "/CN=ipcam-viewer local CA on $host" \
+      -addext "basicConstraints=critical,CA:true,pathlen:0" \
+      -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null ||
+      die "could not create the CA certificate"
+    echo "Wrote a new CA: $dir/ca.crt"
+  fi
+
+  openssl ecparam -name prime256v1 -genkey -noout -out "$dir/server.key" 2>/dev/null ||
+    die "could not create the server key"
+  openssl req -new -key "$dir/server.key" -out "$dir/server.csr" -subj "/CN=$host.local" 2>/dev/null ||
+    die "could not create the request"
+  printf 'subjectAltName=%s\nextendedKeyUsage=serverAuth\nbasicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature,keyEncipherment\n' \
+    "$names" > "$dir/ext.cnf"
+  openssl x509 -req -in "$dir/server.csr" -CA "$dir/ca.crt" -CAkey "$dir/ca.key" -CAcreateserial \
+    -out "$dir/server.crt" -days 397 -sha256 -extfile "$dir/ext.cnf" 2>/dev/null ||
+    die "could not sign the certificate"
+  rm -f "$dir/server.csr" "$dir/ext.cnf"
+  chmod 600 "$dir/ca.key" "$dir/server.key"
+
+  echo "Wrote $dir/server.crt, valid 397 days, for:"
+  echo "  $names"
+  echo ""
+  echo "Turn HTTPS on by adding this to the [proxy] section of cameras.ini:"
+  echo "  tls_listen = :443"
+  echo "then: ipcam update"
+  echo ""
+  echo "Every viewing device has to trust the CA once. Send $dir/ca.crt to it."
+  echo "  macOS: double click, add to the login keychain, set it to Always Trust"
+  echo "  iPhone: AirDrop or mail it, Settings > Profile Downloaded > Install, then"
+  echo "          Settings > General > About > Certificate Trust Settings > on"
+  echo "  Android: Settings > Security > Encryption & credentials > Install a certificate > CA"
+}
+
 cmd_upgrade() {
   command -v curl >/dev/null 2>&1 || die "curl is not installed"
   url="https://raw.githubusercontent.com/isdaniarf/ipcam-viewer/main/install.sh"
@@ -891,6 +948,7 @@ Usage: ipcam <command> [options]
                        Set ONVIF_USER and ONVIF_PASSWORD first.
   config <action>      show, export <file.tgz>, or
                        import <file.tgz|cameras.ini|go2rtc.yaml|url>
+  cert                 Make a local CA and an HTTPS certificate for this host
   upgrade              Install the newest release, and keep the config
   link                 Link this command into PATH
   unlink               Remove the link
@@ -916,6 +974,7 @@ case $command_name in
   update) cmd_update "$@" ;;
   discover) cmd_discover "$@" ;;
   config) cmd_config "$@" ;;
+  cert) cmd_cert ;;
   upgrade) cmd_upgrade ;;
   link) do_link ;;
   unlink) do_unlink ;;

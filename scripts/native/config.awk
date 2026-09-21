@@ -7,7 +7,7 @@ BEGIN {
   proto[1] = "rtsp"; proto[2] = "onvif"; proto[3] = "tapo"; nproto = 3
   split("listen username password candidates allow_paths", list, " "); for (i in list) server_key[list[i]]
   split("listen username password cameras webrtc allow_paths", list, " "); for (i in list) view_key[list[i]]
-  split("listen realm", list, " "); for (i in list) proxy_key[list[i]]
+  split("listen realm tls_listen tls_cert tls_key", list, " "); for (i in list) proxy_key[list[i]]
   split("/ /assets /cameras.json /api/ws /api/hls", list, " ")
   ndefault_allow = 0
   for (i = 1; i <= 5; i++) default_allow[++ndefault_allow] = list[i]
@@ -220,6 +220,7 @@ END {
   }
 
   proxy_on = 0; proxy_listen = ":80"; proxy_realm = "IP Camera Viewer"
+  proxy_tls = ""; proxy_cert = "tls/server.crt"; proxy_tlskey = "tls/server.key"
   if ("proxy" in secidx) {
     proxy_on = 1
     for (i = 1; i <= nkeys["proxy"]; i++) {
@@ -229,6 +230,9 @@ END {
     }
     if (has("proxy", "listen")) proxy_listen = get("proxy", "listen")
     if (has("proxy", "realm")) proxy_realm = get("proxy", "realm")
+    if (has("proxy", "tls_listen")) proxy_tls = get("proxy", "tls_listen")
+    if (has("proxy", "tls_cert")) proxy_cert = get("proxy", "tls_cert")
+    if (has("proxy", "tls_key")) proxy_tlskey = get("proxy", "tls_key")
   }
   proxy_port = proxy_listen; sub(/.*:/, "", proxy_port)
 
@@ -302,6 +306,11 @@ END {
     pfile = out "/proxy.conf"
     printf "listen %s\n", proxy_listen > pfile
     printf "realm %s\n", proxy_realm > pfile
+    if (proxy_tls != "") {
+      printf "tls_listen %s\n", proxy_tls > pfile
+      printf "tls_cert %s\n", proxy_cert > pfile
+      printf "tls_key %s\n", proxy_tlskey > pfile
+    }
     for (i = 1; i <= nacct; i++) printf "user %s %s http://%s\n", acct_user[i], acct_pass[i], acct_backend[i] > pfile
     close(pfile)
   } else {

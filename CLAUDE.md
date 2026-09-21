@@ -255,6 +255,21 @@ It accepts a comma-separated list.
   instance `@proxy`: label `io.ipcam-viewer.go2rtc.proxy`, its own launchd/systemd templates, and
   `binary_for`/`template_for` pick its binary and unit. `bundle.mjs` cross-compiles it with the Go
   toolchain when present; CI always does. Measured: 5.6 MB binary, ~9 MB RSS, video identical through it.
+- `[proxy]` takes `tls_listen`, and then the proxy serves HTTPS as well as HTTP. `tls_cert` and
+  `tls_key` default to `tls/server.crt` and `tls/server.key`, relative to the bundle, because the
+  service sets the working directory there. Plain HTTP keeps listening: dropping it would strand
+  every device that has not trusted the CA yet. The TLS listener sets an empty, non-nil
+  `TLSNextProto`, which pins it to HTTP/1.1. Go turns HTTP/2 on by default for a TLS server and
+  browsers accept it, but HTTP/2 has no `Connection: Upgrade`, so every WebSocket handshake answered
+  400: the page loaded and no video ever played. Verified by measurement, not by reading: over TLS
+  curl negotiated HTTP/2 and the handshake returned 400, `--http1.1` returned 101, and with
+  `TLSNextProto` set it returns 101 on its own.
+- `ipcam cert` writes the local CA and the leaf into `<bundle>/tls`. The leaf lasts 397 days because
+  Apple rejects a TLS certificate valid for more than 398, and it carries `subjectAltName` for
+  `<host>.local`, `<host>`, `localhost`, `127.0.0.1` and every non-loopback IPv4 the host has, which
+  picks up the Tailscale address too. The CA lasts ten years, since each device trusts it by hand.
+  Re-running keeps an existing CA and only re-issues the leaf, so devices do not have to trust a new
+  CA when the address changes. Keys are written 600.
 - A successful Basic auth also mints an `ipcam_session` cookie, and the proxy accepts that cookie in
   place of the header. Without it the page asked for the password **twice**: a browser does not
   reliably attach cached Basic credentials to a WebSocket handshake, so `/api/ws` came back 401 after
