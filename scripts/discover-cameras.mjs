@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createSocket } from "node:dgram";
@@ -8,9 +8,11 @@ import { request as httpsRequest } from "node:https";
 import { connect } from "node:net";
 import { networkInterfaces } from "node:os";
 import { parseArgs, promisify } from "node:util";
+import { parseIni } from "./lib/ini.mjs";
 import {
   buildCameras,
   buildGo2rtcConfig,
+  configFromIni,
   emitGo2rtcYaml,
   manifestJson,
 } from "./lib/config-model.mjs";
@@ -95,6 +97,8 @@ Options:
   --write-config <file>
                        Write a cameras.ini for the cameras that were found.
                        Use "-" for stdout. It never overwrites an existing file.
+  --keep-server <file> Reuse the [server] block of this cameras.ini, instead of
+                       generating a new viewer login.
   --write-runtime <dir>
                        Write go2rtc.yaml and cameras.json straight into <dir>.
                        This needs no cameras.ini and no parser.
@@ -129,6 +133,7 @@ function readOptions() {
         offline: { type: "boolean" },
         json: { type: "boolean" },
         "write-config": { type: "string" },
+        "keep-server": { type: "string" },
         "write-runtime": { type: "string" },
         force: { type: "boolean" },
         help: { type: "boolean" },
@@ -177,6 +182,7 @@ function readOptions() {
     offline: values.offline === true,
     json: values.json === true,
     writeConfig: values["write-config"] ?? null,
+    keepServer: values["keep-server"] ?? null,
     writeRuntime: values["write-runtime"] ?? null,
     force: values.force === true,
     credentials: user ? { user, password } : null,
@@ -1063,7 +1069,21 @@ function rtspPlanFor(host) {
   return null;
 }
 
-function planCameras(cameras, credentials) {
+function serverFromFile(path) {
+  if (!path) return null;
+  if (!existsSync(path)) return null;
+  const parsed = parseIni(readFileSync(path, "utf-8"));
+  if (parsed.errors.length > 0) return null;
+  const { server } = configFromIni(parsed.sections, []);
+  if (!server || typeof server.password !== "string" || server.password === "") return null;
+  return {
+    listen: server.listen ?? ":80",
+    username: server.username ?? "viewer",
+    password: server.password,
+  };
+}
+
+function planCameras(cameras, credentials, keepServer) {
   const used = new Set();
   const notes = [];
   const entries = [];
@@ -1113,7 +1133,7 @@ function planCameras(cameras, credentials) {
   }
   notes.push("Tapo needs the TP-Link cloud password. Add tapo.password yourself when you want it.");
 
-  const server = {
+  const server = keepServer ?? {
     listen: ":80",
     username: "viewer",
     password: randomBytes(12).toString("base64url"),
@@ -1335,7 +1355,11 @@ async function main() {
   const others = hosts.filter((host) => !host.likelyCamera);
 
   if (options.writeConfig || options.writeRuntime) {
-    const plan = planCameras(cameras, options.credentials);
+    const keepServer = serverFromFile(options.keepServer);
+    if (options.keepServer && !keepServer) {
+      log(`note: ${options.keepServer} had no usable [server] block. Generating a new viewer login.`);
+    }
+    const plan = planCameras(cameras, options.credentials, keepServer);
     const usable = plan.entries.filter((entry) => entry.rtsp || entry.onvif);
 
     if (options.writeConfig) {
@@ -1345,6 +1369,7 @@ async function main() {
       } else {
         writeFileSync(options.writeConfig, text);
         log(`Wrote ${options.writeConfig} with ${plan.entries.length} camera(s).`);
+        log(`Viewer login: ${plan.server.username} / ${plan.server.password}`);
       }
     }
 

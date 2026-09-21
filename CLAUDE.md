@@ -218,6 +218,11 @@ It accepts a comma-separated list.
   because the release ships it next to the discovery script without npm.
 - `--write-runtime <dir>` writes `go2rtc.yaml` + `cameras.json` (+ `www/cameras.json`) with no YAML
   parser, so a release install can configure itself. `ipcam discover --deep` wraps it.
+- go2rtc has no built-in account: with `api.username`/`api.password` unset there is no auth at all.
+  The `viewer` name and the random password are ours (`DEFAULT_SERVER` in config-model, and the
+  generator in discover). Both scan paths reuse an existing `[server]` block rather than replacing it:
+  the shell path via `existing_server_value`, the `--deep` path via `--keep-server`, which the CLI
+  points at a copy of the old file before it is replaced.
 - `ipcam discover` (no flag) needs no Node at all. It writes `cameras.ini` only (with `onvif.profile` /
   `onvif.sub_profile`) and touches neither `go2rtc.yaml` nor the service; `--apply` renders and restarts.
   `require_bundle` renders from `cameras.ini` when `go2rtc.yaml` is missing, so `ipcam install` straight

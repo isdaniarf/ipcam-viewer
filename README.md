@@ -142,7 +142,7 @@ ipcam update
 | Option | Effect |
 |--------|--------|
 | `--apply` | Regenerate the config and restart at once, with no review step. |
-| `--force` | Replace an existing `cameras.ini`. It keeps the viewer login from that file. |
+| `--force` | Replace an existing `cameras.ini`. Both scans keep the viewer login from that file. |
 | `--deep` | Use the bundled scanner instead. It needs Node.js 22, and it also finds cameras that speak no ONVIF, and reports the vendor and the open ports. |
 
 `ipcam upgrade` installs a newer release later and keeps the config.
@@ -338,7 +338,8 @@ Check the result before you use it:
 
 - The names come from the camera model, such as `tapo_c210`, unless you gave the camera a name in its
   own app. Rename them to the room, for example `hallway`.
-- The viewer password under `[server]` is random. Change it if you want your own.
+- The viewer password under `[server]` is random on a first scan. A later scan keeps the one already
+  in the file. Pass `--keep-server <file>` to reuse a login from somewhere else.
 - No `tapo.password` is written, because the TP-Link cloud password is not on the network.
 - Without `ONVIF_USER` and `ONVIF_PASSWORD` it writes placeholders for the camera account, and it
   cannot read the stream path from a camera that needs a login.
@@ -358,6 +359,7 @@ Run it on the host, not in Docker. Docker on macOS blocks multicast and hides th
 | `--offline` | Look up no MAC vendor online. |
 | `--json` | Print the result as JSON. |
 | `--write-config <file>` | Write a `cameras.ini` for the cameras that were found. `-` means stdout. |
+| `--keep-server <file>` | Reuse the `[server]` block of that file instead of generating a viewer login. |
 | `--write-runtime <dir>` | Write `go2rtc.yaml` and `cameras.json` straight into a directory. |
 | `--force` | Let `--write-runtime` replace an existing `go2rtc.yaml`. |
 

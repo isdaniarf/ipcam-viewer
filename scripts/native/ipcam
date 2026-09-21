@@ -567,12 +567,22 @@ discover_with_node() {
   command -v node >/dev/null 2>&1 || die "node is not installed. Drop --deep to scan with go2rtc."
   script="$BUNDLE_DIR/scripts/discover-cameras.mjs"
   [ -f "$script" ] || die "this bundle ships no discovery script. Install a newer release."
+  keep=""
   if [ -f "$BUNDLE_DIR/cameras.ini" ]; then
     [ "$force" = yes ] || die "$BUNDLE_DIR/cameras.ini already exists. Pass --force to replace it."
+    keep=$(mktemp) || die "could not write a temporary file"
+    cp "$BUNDLE_DIR/cameras.ini" "$keep"
     rm -f "$BUNDLE_DIR/cameras.ini"
   fi
-  node "$script" --write-config "$BUNDLE_DIR/cameras.ini" "$@" || die "the scan failed"
-  echo "Wrote $BUNDLE_DIR/cameras.ini."
+  if [ -n "$keep" ]; then
+    node "$script" --write-config "$BUNDLE_DIR/cameras.ini" --keep-server "$keep" "$@"
+    status=$?
+    rm -f "$keep"
+  else
+    node "$script" --write-config "$BUNDLE_DIR/cameras.ini" "$@"
+    status=$?
+  fi
+  [ "$status" -eq 0 ] || die "the scan failed"
 }
 
 cmd_discover() {
