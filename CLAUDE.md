@@ -224,6 +224,11 @@ It accepts a comma-separated list.
   generator in discover). Both scan paths reuse an existing `[server]` block rather than replacing it:
   the shell path via `existing_server_value`, the `--deep` path via `--keep-server`, which the CLI
   points at a copy of the old file before it is replaced.
+- `ipcam discover` merges by default: both scan paths write a candidate to a temp file, and
+  `scripts/native/merge-ini.awk` folds it into the existing `cameras.ini`. It matches cameras by
+  `host`, reproduces the existing file verbatim (so renames, labels and hand-edited keys survive),
+  appends only unseen hosts, uniquifies a colliding section name with the host, and never copies the
+  scanned `[server]` block. `--replace` writes a fresh file. The merge is idempotent; CI covers it.
 - `ipcam discover` (no flag) needs no Node at all. It writes `cameras.ini` only (with `onvif.profile` /
   `onvif.sub_profile`) and touches neither `go2rtc.yaml` nor the service; `--apply` renders and restarts.
   `require_bundle` renders from `cameras.ini` when `go2rtc.yaml` is missing, so `ipcam install` straight

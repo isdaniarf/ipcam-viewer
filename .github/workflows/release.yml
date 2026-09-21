@@ -45,7 +45,7 @@ jobs:
             cp scripts/native/ipcam scripts/native/install.sh "$stage/"
             mkdir -p "$stage/scripts/lib"
             cp scripts/discover-cameras.mjs "$stage/scripts/"
-            cp scripts/native/config.awk "$stage/scripts/"
+            cp scripts/native/config.awk scripts/native/merge-ini.awk "$stage/scripts/"
             cp scripts/lib/config-model.mjs scripts/lib/ini.mjs "$stage/scripts/lib/"
             cp scripts/native/launchd.plist scripts/native/systemd.service "$stage/service/"
             chmod +x "$stage/ipcam" "$stage/install.sh"

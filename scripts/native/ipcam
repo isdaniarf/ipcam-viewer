@@ -450,14 +450,11 @@ render_config() {
 }
 
 discover_with_go2rtc() {
-  force=$1
+  target=$1
   command -v curl >/dev/null 2>&1 || die "curl is not installed"
   [ -x "$BUNDLE_DIR/go2rtc" ] || die "no go2rtc binary in $BUNDLE_DIR"
   [ -n "${ONVIF_USER:-}" ] && [ -n "${ONVIF_PASSWORD:-}" ] ||
     die "set ONVIF_USER and ONVIF_PASSWORD to the camera account, then run this again"
-  if [ -f "$BUNDLE_DIR/cameras.ini" ] && [ "$force" != yes ]; then
-    die "$BUNDLE_DIR/cameras.ini already exists. Pass --force to replace it."
-  fi
 
   scratch=$(mktemp -d)
   port=$((19000 + $$ % 900))
@@ -558,59 +555,65 @@ discover_with_go2rtc() {
     echo "username = $viewer"
     echo "password = $secret"
     cat "$scratch/cameras"
-  } > "$BUNDLE_DIR/cameras.ini"
+  } > "$target"
   rm -rf "$scratch"
 
-  echo "Wrote $BUNDLE_DIR/cameras.ini with $found camera(s)."
+  echo "Found $found camera(s)."
   echo "Viewer login: $viewer / $secret"
 }
 
 discover_with_node() {
-  force=$1
+  target=$1
   shift
   command -v node >/dev/null 2>&1 || die "node is not installed. Drop --deep to scan with go2rtc."
   script="$BUNDLE_DIR/scripts/discover-cameras.mjs"
   [ -f "$script" ] || die "this bundle ships no discovery script. Install a newer release."
-  keep=""
+  rm -f "$target"
   if [ -f "$BUNDLE_DIR/cameras.ini" ]; then
-    [ "$force" = yes ] || die "$BUNDLE_DIR/cameras.ini already exists. Pass --force to replace it."
-    keep=$(mktemp) || die "could not write a temporary file"
-    cp "$BUNDLE_DIR/cameras.ini" "$keep"
-    rm -f "$BUNDLE_DIR/cameras.ini"
-  fi
-  if [ -n "$keep" ]; then
-    node "$script" --write-config "$BUNDLE_DIR/cameras.ini" --keep-server "$keep" "$@"
-    status=$?
-    rm -f "$keep"
+    node "$script" --write-config "$target" --keep-server "$BUNDLE_DIR/cameras.ini" "$@" ||
+      die "the scan failed"
   else
-    node "$script" --write-config "$BUNDLE_DIR/cameras.ini" "$@"
-    status=$?
+    node "$script" --write-config "$target" "$@" || die "the scan failed"
   fi
-  [ "$status" -eq 0 ] || die "the scan failed"
 }
 
 cmd_discover() {
   deep=no
-  force=no
+  replace=no
   apply=no
   rest=""
   for argument in "$@"; do
     case $argument in
       --deep) deep=yes ;;
-      --force) force=yes ;;
+      --replace|--force) replace=yes ;;
       --apply) apply=yes ;;
       *) rest="$rest $argument" ;;
     esac
   done
 
+  merger="$BUNDLE_DIR/scripts/merge-ini.awk"
+  candidate=$(mktemp) || die "could not write a temporary file"
+
   if [ "$deep" = yes ]; then
     # shellcheck disable=SC2086
-    discover_with_node "$force" $rest
+    discover_with_node "$candidate" $rest
   else
-    discover_with_go2rtc "$force"
+    discover_with_go2rtc "$candidate"
   fi
+  [ -s "$candidate" ] || { rm -f "$candidate"; die "the scan wrote nothing"; }
 
-  [ -f "$BUNDLE_DIR/cameras.ini" ] || die "the scan wrote no cameras.ini"
+  if [ -f "$BUNDLE_DIR/cameras.ini" ] && [ "$replace" != yes ]; then
+    [ -f "$merger" ] || { rm -f "$candidate"; die "this bundle ships no merge-ini.awk. Install a newer release."; }
+    merged=$(mktemp) || die "could not write a temporary file"
+    LC_ALL=C awk -f "$merger" "$BUNDLE_DIR/cameras.ini" "$candidate" > "$merged" ||
+      { rm -f "$candidate" "$merged"; die "the merge failed"; }
+    mv "$merged" "$BUNDLE_DIR/cameras.ini"
+    echo "Updated $BUNDLE_DIR/cameras.ini"
+  else
+    mv "$candidate" "$BUNDLE_DIR/cameras.ini"
+    echo "Wrote $BUNDLE_DIR/cameras.ini"
+  fi
+  rm -f "$candidate"
 
   if [ "$apply" != yes ]; then
     echo ""
@@ -663,12 +666,14 @@ Usage: ipcam <command> [options]
   url                  Print the address and the viewer user name
   update [--build]     Regenerate the config from cameras.ini, then restart.
                        --build also rebuilds the page. It needs the repository.
-  discover [options]   Scan for ONVIF cameras and write cameras.ini. It leaves the
-                       running config alone; run "ipcam update" to apply it.
-                         --apply  regenerate the config and restart at once
-                         --force  replace an existing cameras.ini
-                         --deep   use the bundled scanner instead. It needs Node.js,
-                                  and it also finds cameras that speak no ONVIF.
+  discover [options]   Scan for ONVIF cameras and update cameras.ini. It keeps every
+                       camera already in the file, matching on host, and appends the
+                       ones it finds that are missing. It leaves the running config
+                       alone; run "ipcam update" to apply it.
+                         --apply    regenerate the config and restart at once
+                         --replace  write a fresh file instead of merging
+                         --deep     use the bundled scanner instead. It needs Node.js,
+                                    and it also finds cameras that speak no ONVIF.
                        Set ONVIF_USER and ONVIF_PASSWORD first.
   config <action>      show, export <file.tgz>, or
                        import <file.tgz|cameras.ini|go2rtc.yaml|url>

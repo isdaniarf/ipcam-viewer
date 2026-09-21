@@ -188,6 +188,7 @@ async function main() {
   );
   copyFileSync(resolve(root, "scripts", "lib", "ini.mjs"), resolve(scriptsDir, "lib", "ini.mjs"));
   copyFileSync(resolve(native, "config.awk"), resolve(scriptsDir, "config.awk"));
+  copyFileSync(resolve(native, "merge-ini.awk"), resolve(scriptsDir, "merge-ini.awk"));
   if (existsSync(resolve(root, "cameras.ini"))) {
     copyFileSync(resolve(root, "cameras.ini"), resolve(outDir, "cameras.ini"));
   }

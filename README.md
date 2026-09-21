@@ -132,8 +132,13 @@ ONVIF cameras, reads each camera's stream profiles, and writes `cameras.ini`. It
 profile for the grid tile and the second one as the low resolution stream, and it prints the viewer
 login it generated.
 
+It merges rather than overwrites. Cameras already in `cameras.ini` are matched by `host` and left
+exactly as they are, so a renamed section, a label and hand-edited stream paths all survive a rescan.
+Cameras it finds that are missing are appended, and a camera the scan did not see stays in the file.
+The `[server]` block is never touched.
+
 It writes that one file and nothing else. The running config stays as it is, so you can rename the
-cameras from `c210` to `hallway` first. Apply it when you are happy:
+new cameras from `c210` to `hallway` first. Apply it when you are happy:
 
 ```bash
 ipcam update
@@ -142,7 +147,7 @@ ipcam update
 | Option | Effect |
 |--------|--------|
 | `--apply` | Regenerate the config and restart at once, with no review step. |
-| `--force` | Replace an existing `cameras.ini`. Both scans keep the viewer login from that file. |
+| `--replace` | Write a fresh file instead of merging. Both scans still keep the viewer login. |
 | `--deep` | Use the bundled scanner instead. It needs Node.js 22, and it also finds cameras that speak no ONVIF, and reports the vendor and the open ports. |
 
 `ipcam upgrade` installs a newer release later and keeps the config.
@@ -215,7 +220,7 @@ The command then works from anywhere.
 | `ipcam logs` | Follow the service log |
 | `ipcam url` | Print the address and the viewer user name |
 | `ipcam update [--build]` | Regenerate the config from `cameras.ini`, then restart |
-| `ipcam discover [--apply\|--force\|--deep]` | Scan the network and write `cameras.ini`. It applies nothing unless you pass `--apply` |
+| `ipcam discover [--apply\|--replace\|--deep]` | Scan the network and merge what it finds into `cameras.ini`. It applies nothing unless you pass `--apply` |
 | `ipcam config show\|export\|import` | Show, export or import the config. Import takes a `.tgz`, a `cameras.ini` or a `go2rtc.yaml` |
 | `ipcam upgrade` | Install the newest release, and keep the config |
 | `ipcam uninstall` | Stop the service, remove it, and remove the link |
@@ -477,6 +482,7 @@ Tailscale address of the host, under `[server]`.
 | `scripts/discover-cameras.mjs` | It finds cameras on the LAN with WS-Discovery and a port sweep. |
 | `scripts/lib/` | The INI reader and the shared config logic. No dependency. |
 | `scripts/native/config.awk` | The same reader in awk. The installed bundle uses it, so it needs no Node.js. |
+| `scripts/native/merge-ini.awk` | It merges a scan into an existing `cameras.ini`, matching on `host`. |
 | `scripts/test-config-parity.mjs` | It proves the awk and JavaScript readers agree. CI runs it. |
 | `scripts/native/` | The `ipcam` command, and the launchd and systemd templates for the bundle. |
 | `install.sh` | The `curl \| sh` entry point. It installs a published release. |

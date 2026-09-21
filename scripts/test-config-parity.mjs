@@ -194,6 +194,87 @@ for (const [name, text] of Object.entries(invalid)) {
   if (!js.ok && !awk.ok) console.log(`ok   invalid/${name} (both refuse)`);
 }
 
+const mergeProgram = resolve(here, "native", "merge-ini.awk");
+
+function runMerge(existing, candidate) {
+  const dir = mkdtempSync(join(tmpdir(), "merge-"));
+  writeFileSync(join(dir, "a.ini"), existing);
+  writeFileSync(join(dir, "b.ini"), candidate);
+  const result = spawnSync("awk", ["-f", mergeProgram, join(dir, "a.ini"), join(dir, "b.ini")], {
+    env: { ...process.env, LC_ALL: "C" },
+    encoding: "utf-8",
+  });
+  rmSync(dir, { recursive: true, force: true });
+  return { text: result.stdout, report: result.stderr, status: result.status };
+}
+
+const BASE = `[server]
+listen = :8099
+username = myuser
+password = mypassword
+
+[hallway]
+label = Front Hall
+host = 10.0.0.1
+username = u
+password = p
+rtsp.path = /stream1
+`;
+
+const SCAN = `[server]
+listen = :80
+username = viewer
+password = generated
+
+[c120]
+host = 10.0.0.1
+username = s
+password = s
+onvif.port = 2020
+
+[c210]
+host = 10.0.0.2
+username = s
+password = s
+onvif.port = 2020
+`;
+
+const mergeChecks = [
+  ["keeps a renamed camera matched by host", (m) => m.text.includes("[hallway]") && !m.text.includes("[c120]")],
+  ["appends the camera that is missing", (m) => m.text.includes("[c210]")],
+  ["never takes the scanned server block", (m) => m.text.includes("password = mypassword") && !m.text.includes("password = generated")],
+  ["keeps hand-edited keys", (m) => m.text.includes("label = Front Hall") && m.text.includes("rtsp.path = /stream1")],
+  ["reports one kept and one added", (m) => /1 camera\(s\) already present, 1 added/.test(m.report)],
+  ["is idempotent", () => {
+    const once = runMerge(BASE, SCAN);
+    const twice = runMerge(once.text, SCAN);
+    return /0 added/.test(twice.report) && twice.text.trim() === once.text.trim();
+  }],
+  ["renames a colliding section", () => {
+    const m = runMerge(BASE, "[hallway]\nhost = 10.0.0.9\nusername = s\npassword = s\nonvif.port = 80\n");
+    return /added\s+10\.0\.0\.9 as \[hallway_/.test(m.report);
+  }],
+  ["output still parses", (m) => {
+    const dir = mkdtempSync(join(tmpdir(), "mergeparse-"));
+    writeFileSync(join(dir, "cameras.ini"), m.text);
+    const out = join(dir, "out");
+    mkdirSync(out, { recursive: true });
+    const ok = runAwk(join(dir, "cameras.ini"), out).ok && runJs(join(dir, "cameras.ini"), out).ok;
+    rmSync(dir, { recursive: true, force: true });
+    return ok;
+  }],
+];
+
+const merged = runMerge(BASE, SCAN);
+if (merged.status !== 0) report("merge", "run", `awk exited ${merged.status}: ${merged.report}`);
+for (const [name, check] of mergeChecks) {
+  let ok = false;
+  try { ok = check(merged); } catch (error) { ok = false; }
+  if (ok) console.log(`ok   merge/${name}`);
+  else report("merge", name, "check failed");
+}
+
 rmSync(scratch, { recursive: true, force: true });
-console.log(failures === 0 ? `\nparity: all ${Object.keys(valid).length + Object.keys(invalid).length} cases agree` : `\nparity: ${failures} failure(s)`);
+const total = Object.keys(valid).length + Object.keys(invalid).length + mergeChecks.length;
+console.log(failures === 0 ? `\nparity: all ${total} cases agree` : `\nparity: ${failures} failure(s)`);
 process.exit(failures === 0 ? 0 : 1);
