@@ -5,7 +5,10 @@ BEGIN {
   if (static_dir == "") static_dir = "www"
   nsec = 0; nerr = 0; cur = ""
   proto[1] = "rtsp"; proto[2] = "onvif"; proto[3] = "tapo"; nproto = 3
-  split("listen username password candidates", list, " "); for (i in list) server_key[list[i]]
+  split("listen username password candidates allow_paths", list, " "); for (i in list) server_key[list[i]]
+  split("/ /assets /cameras.json /api/ws /api/hls", list, " ")
+  ndefault_allow = 0
+  for (i = 1; i <= 5; i++) default_allow[++ndefault_allow] = list[i]
   split("label host username password route", list, " "); for (i in list) camera_key[list[i]]
   split("api assets index.html cameras.json", list, " "); for (i in list) reserved_route[list[i]]
   split("rtsp.port rtsp.path rtsp.sub_path rtsp.username rtsp.password onvif.port onvif.profile onvif.sub_profile onvif.username onvif.password tapo.username tapo.password", list, " ")
@@ -102,6 +105,10 @@ END {
     if (has("server", "candidates")) {
       m = split(get("server", "candidates"), raw, ",")
       for (i = 1; i <= m; i++) { c = trim(raw[i]); if (c != "") cand[++ncand] = c ":8555" }
+    }
+    if (has("server", "allow_paths")) {
+      m = split(get("server", "allow_paths"), raw, ",")
+      for (i = 1; i <= m; i++) { c = trim(raw[i]); if (c != "") allow[++nallow] = c }
     }
   }
   if (ENVIRON["HOST_IP"] != "") {
@@ -209,9 +216,13 @@ END {
   yfile = out "/go2rtc.yaml"
   printf "streams:\n" > yfile
   for (i = 1; i <= nstreams; i++) printf "  %s: %s\n", sid[i], yq(surl[i]) > yfile
+  if (nallow == 0) { for (i = 1; i <= ndefault_allow; i++) allow[++nallow] = default_allow[i] }
+  allow_list = ""
+  for (i = 1; i <= nallow; i++) allow_list = allow_list (i > 1 ? ", " : "") yq(allow[i])
   printf "api:\n" > yfile
   printf "  listen: %s\n", yq(listen) > yfile
   printf "  static_dir: %s\n", yq(static_dir) > yfile
+  printf "  allow_paths: [%s]\n", allow_list > yfile
   printf "  username: %s\n", yq(viewer) > yfile
   printf "  password: %s\n", yq(secret) > yfile
   printf "webrtc:\n  listen: ':8555'\n  ice_servers: []\n" > yfile

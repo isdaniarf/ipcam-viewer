@@ -2,6 +2,7 @@ export const PROTOCOLS = ["rtsp", "onvif", "tapo"];
 export const NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 export const DEFAULT_PORT = { rtsp: 554, onvif: 80 };
 export const DEFAULT_SERVER = { listen: ":80", username: "viewer" };
+export const DEFAULT_ALLOW_PATHS = ["/", "/assets", "/cameras.json", "/api/ws", "/api/hls"];
 
 export function toLabel(name) {
   return name
@@ -168,7 +169,10 @@ export function buildServer(server, errors) {
       "`server.password` is missing. The native server needs a viewer password, because the go2rtc API shows the camera passwords to every client without one.",
     );
   }
-  return { listen: String(listen), username: String(username), password };
+  const allowPaths = block.allow_paths && block.allow_paths.length > 0
+    ? block.allow_paths
+    : DEFAULT_ALLOW_PATHS;
+  return { listen: String(listen), username: String(username), password, allowPaths };
 }
 
 export function buildGo2rtcConfig({ streams, api, candidates }) {
@@ -181,7 +185,7 @@ export function manifestJson(manifest) {
   return `${JSON.stringify({ cameras: manifest }, null, 2)}\n`;
 }
 
-const SERVER_KEYS = new Set(["listen", "username", "password", "candidates"]);
+const SERVER_KEYS = new Set(["listen", "username", "password", "candidates", "allow_paths"]);
 const CAMERA_KEYS = new Set(["label", "host", "username", "password", "route"]);
 export const ROUTE_PATTERN = /^[A-Za-z0-9_-]+$/;
 export const RESERVED_ROUTES = new Set(["api", "assets", "index.html", "cameras.json"]);
@@ -209,7 +213,7 @@ export function configFromIni(sections, errors) {
           errors.push(`line ${line}: "${key}" has no value`);
           continue;
         }
-        server[key] = key === "candidates"
+        server[key] = key === "candidates" || key === "allow_paths"
           ? value.split(",").map((item) => item.trim()).filter(Boolean)
           : value;
       }
@@ -272,7 +276,11 @@ export function emitGo2rtcYaml(config) {
   }
   lines.push("api:");
   for (const [key, value] of Object.entries(config.api)) {
-    lines.push(`  ${key}: ${yamlQuote(value)}`);
+    if (Array.isArray(value)) {
+      lines.push(`  ${key}: [${value.map(yamlQuote).join(", ")}]`);
+    } else {
+      lines.push(`  ${key}: ${yamlQuote(value)}`);
+    }
   }
   lines.push("webrtc:");
   lines.push(`  listen: ${yamlQuote(config.webrtc.listen)}`);

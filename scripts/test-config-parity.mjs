@@ -99,6 +99,17 @@ username = u
 password = p
 rtsp.path = /s1
 `,
+  allow_paths_override: `
+[server]
+password = x
+allow_paths = /, /api/ws, /api/streams
+
+[cam]
+host = 10.0.0.1
+username = u
+password = p
+rtsp.path = /s1
+`,
   tapo_only: `
 [server]
 password = x

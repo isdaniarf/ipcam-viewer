@@ -225,6 +225,15 @@ It accepts a comma-separated list.
   generator in discover). Both scan paths reuse an existing `[server]` block rather than replacing it:
   the shell path via `existing_server_value`, the `--deep` path via `--keep-server`, which the CLI
   points at a copy of the old file before it is replaced.
+- The native `api` block always emits `allow_paths`, default
+  `['/', '/assets', '/cameras.json', '/api/ws', '/api/hls']`, overridable by a comma-separated
+  `allow_paths` under `[server]`. It gates loopback too. Measured: the page, assets, manifest, route
+  dirs and the `/api/ws` upgrade all keep working; `/api/config`, `/api/streams`, `/api/frame.jpeg`
+  and `/api/stream.mp4` return 404. This closes the credential leak (both endpoints print the full
+  `rtsp://user:pass@...` URLs) but is NOT access control: `/api/ws?src=<name>` still serves any stream
+  to anyone with the viewer password, verified by a WebSocket client pulling MSE bytes for a camera
+  absent from the served manifest. Per-camera separation needs a second instance. The docker target is
+  unchanged, since nginx already restricts paths there.
 - A camera `route` becomes a real directory under `www/`, because go2rtc's file server has no SPA
   fallback: it 404s an unknown path but 301s `/hallway` to `/hallway/` and serves the index there.
   `generate-config.mjs` and `ipcam render_config` both copy `www/index.html` into `www/<route>/` and

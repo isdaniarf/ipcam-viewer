@@ -132,6 +132,7 @@ export function generate(options = {}) {
     ? {
         listen: serverConfig.listen,
         static_dir: staticDir,
+        allow_paths: serverConfig.allowPaths,
         username: serverConfig.username,
         password: serverConfig.password,
       }

@@ -275,6 +275,7 @@ number, so a typo cannot pass silently.
 | `username` | no | `viewer` | The viewer user name. |
 | `listen` | no | `:80` | The address and port of the web server. |
 | `candidates` | no | — | Host IP addresses for WebRTC, comma separated. See [Remote access](#remote-access). |
+| `allow_paths` | no | See below | The paths the server answers at all, comma separated. |
 
 ### Camera keys
 
@@ -285,6 +286,32 @@ number, so a typo cannot pass silently.
 | `route` | no | — | A path that opens this camera alone, for example `hallway` gives `/hallway`. |
 | `username` | for RTSP and ONVIF | — | The camera account. A protocol key can override it. |
 | `password` | for RTSP and ONVIF | — | The camera password. A protocol key can override it. |
+
+### What the server exposes
+
+go2rtc serves its whole API on the same port as the page, and two of those endpoints return your
+camera passwords in clear text. The generated config therefore answers only the paths the page needs:
+
+```yaml
+allow_paths: ['/', '/assets', '/cameras.json', '/api/ws', '/api/hls']
+```
+
+Everything else returns 404, including `/api/config` and `/api/streams`, and including requests from
+the machine itself. So a person holding the viewer password can watch the cameras, but cannot read the
+camera account out of the server.
+
+This also blocks those endpoints for you. Widen the list temporarily when you want them for
+diagnosis, then put it back:
+
+```ini
+[server]
+allow_paths = /, /assets, /cameras.json, /api/ws, /api/hls, /api/streams
+```
+
+Note what this does not do. The stream endpoint accepts any stream name, so the viewer password
+grants access to every camera, whatever the page chooses to show. Leaving a camera out of the page
+hides it from the interface, not from the server. Use a second instance with its own cameras and its
+own password when you need real separation.
 
 ### One camera on its own address
 
