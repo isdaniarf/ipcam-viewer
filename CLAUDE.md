@@ -229,6 +229,12 @@ It accepts a comma-separated list.
   adding a view to `cameras.ini` installs its service and deleting one removes it; `installed_instances`
   finds them by scanning for `io.ipcam-viewer.go2rtc.<view>.plist` / `ipcam-viewer-<view>.service`.
   Loopback skips auth unless `local_auth: true`, so test credential separation over the LAN or set it.
+- Ports are validated by number, not by the whole address: web ports must be unique across the main
+  server and all views, and `webrtc` ports likewise (seeded with 8555 for the main server) and must not
+  collide with a web port. Without this a second instance binds nothing for WebRTC, logs nothing, keeps
+  serving, and silently falls back to MSE, which is very hard to diagnose. The proxy never carries
+  WebRTC media: it holds one TCP socket and no UDP, while go2rtc holds the UDP media ports on every
+  interface, so media always goes browser to go2rtc directly.
 - `[proxy]` puts every server behind one port. `proxy/main.go` (~130 lines, no deps) reads
   `proxy.conf`, checks Basic auth, strips the header and forwards to that user's backend with
   `httputil.ReverseProxy`, which handles the WebSocket upgrade. With `[proxy]` present every go2rtc

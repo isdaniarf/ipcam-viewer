@@ -236,6 +236,10 @@ END {
   allow_list = ""
   for (i = 1; i <= nallow; i++) allow_list = allow_list (i > 1 ? ", " : "") yq(allow[i])
 
+  main_port = listen; sub(/.*:/, "", main_port)
+  used_listen[main_port] = 1
+  used_webrtc["8555"] = 1
+
   for (i = 1; i <= ncams; i++) pick[i] = i
   write_server(out, proxy_on ? loopback(listen) : listen, static_dir, viewer, secret, allow_list, ":8555", ncams, 1)
   if (proxy_on) { nacct = 0; add_account(viewer, secret, loopback(listen)) }
@@ -254,12 +258,17 @@ END {
     }
     vlisten = has(vname, "listen") ? get(vname, "listen") : ""
     if (vlisten == "") { err(vwhere " needs `listen`, for example \":8080\"."); continue }
-    if (vlisten == listen || (vlisten in used_listen)) { err(vwhere " listens on " vlisten ", which another server already uses."); continue }
-    used_listen[vlisten] = 1
+    vport = vlisten; sub(/.*:/, "", vport)
+    if (vport in used_listen) { err(vwhere " listens on " vlisten ", which another server already uses."); continue }
+    used_listen[vport] = 1
     vpass = has(vname, "password") ? get(vname, "password") : ""
     if (vpass == "") { err(vwhere " needs `password`."); continue }
     vuser = has(vname, "username") ? get(vname, "username") : "viewer"
     vwebrtc = has(vname, "webrtc") ? get(vname, "webrtc") : sprintf(":%d", 8556 + nviews)
+    wport = vwebrtc; sub(/.*:/, "", wport)
+    if (wport in used_webrtc) { err(vwhere " uses the WebRTC port " vwebrtc ", which another server already uses."); continue }
+    if (wport in used_listen) { err(vwhere " uses " vwebrtc " for WebRTC, which a server already listens on."); continue }
+    used_webrtc[wport] = 1
     vallow = allow_list
     if (has(vname, "allow_paths")) {
       m = split(get(vname, "allow_paths"), raw, ",")

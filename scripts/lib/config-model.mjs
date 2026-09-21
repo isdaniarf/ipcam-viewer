@@ -358,7 +358,9 @@ export function emitProxyConfig(proxy) {
 export function buildViews(views, cameras, mainServer, errors) {
   const known = new Set(cameras.map((camera) => camera.name));
   const seenName = new Set();
-  const seenListen = new Set([String(mainServer?.listen ?? DEFAULT_SERVER.listen)]);
+  const port = (address) => String(address).split(":").pop();
+  const seenListen = new Set([port(mainServer?.listen ?? DEFAULT_SERVER.listen)]);
+  const seenWebrtc = new Set(["8555"]);
   const result = [];
 
   views.forEach((view, index) => {
@@ -373,11 +375,22 @@ export function buildViews(views, cameras, mainServer, errors) {
       errors.push(`${where} needs \`listen\`, for example ":8080".`);
       return;
     }
-    if (seenListen.has(view.listen)) {
+    if (seenListen.has(port(view.listen))) {
       errors.push(`${where} listens on ${view.listen}, which another server already uses.`);
       return;
     }
-    seenListen.add(view.listen);
+    seenListen.add(port(view.listen));
+
+    const webrtc = view.webrtc ?? `:${8556 + index}`;
+    if (seenWebrtc.has(port(webrtc))) {
+      errors.push(`${where} uses the WebRTC port ${webrtc}, which another server already uses.`);
+      return;
+    }
+    if (seenListen.has(port(webrtc))) {
+      errors.push(`${where} uses ${webrtc} for WebRTC, which a server already listens on.`);
+      return;
+    }
+    seenWebrtc.add(port(webrtc));
 
     if (typeof view.password !== "string" || view.password === "") {
       errors.push(`${where} needs \`password\`.`);
@@ -398,7 +411,7 @@ export function buildViews(views, cameras, mainServer, errors) {
       listen: view.listen,
       username: view.username ?? DEFAULT_SERVER.username,
       password: view.password,
-      webrtc: view.webrtc ?? `:${8556 + index}`,
+      webrtc,
       allowPaths: view.allow_paths && view.allow_paths.length > 0 ? view.allow_paths : DEFAULT_ALLOW_PATHS,
       cameras: view.cameras,
     });

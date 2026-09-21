@@ -308,7 +308,7 @@ from the page, they are absent from that server, so asking it for one returns no
 | `password` | yes | — | The password for this view. |
 | `cameras` | yes | — | The camera names this view may show, comma separated. |
 | `username` | no | `viewer` | The user name for this view. |
-| `webrtc` | no | `:8556`, then `:8557` | The WebRTC port. Each server needs its own. |
+| `webrtc` | no | `:8556`, then `:8557` | The media port. Every server needs its own, and it must not clash with a web port. |
 | `allow_paths` | no | The standard list | As for `[server]`. |
 
 `ipcam install`, `start`, `stop`, `restart` and `uninstall` cover every view as well as the main
@@ -352,6 +352,11 @@ and `listen` on each becomes the loopback port it uses.
 |-----|----------|---------|-------------|
 | `listen` | no | `:80` | The one address everybody uses. |
 | `realm` | no | `IP Camera Viewer` | The name the browser shows in its login box. |
+
+The proxy shares one web address, but not the media ports. Each server still needs its own `webrtc`
+port, reachable from the viewer, because WebRTC video goes straight from the browser to that server
+and never through the proxy. The generator refuses a clash rather than letting a view fall back to a
+slower transport without telling you.
 
 Each user name must be unique, since the proxy tells people apart by it. `ipcam` runs the proxy
 alongside the rest, `ipcam status` shows it, and `ipcam logs proxy` follows its log.
