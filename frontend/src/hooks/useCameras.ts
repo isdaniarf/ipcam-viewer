@@ -33,7 +33,9 @@ function parseCamera(value: unknown): Camera | null {
   if (Object.keys(streams).length === 0) return null;
 
   const label = typeof record.label === "string" ? record.label : record.name;
-  return { name: record.name, label, streams };
+  const camera: Camera = { name: record.name, label, streams };
+  if (typeof record.route === "string" && record.route !== "") camera.route = record.route;
+  return camera;
 }
 
 function parseManifest(value: unknown): Camera[] {

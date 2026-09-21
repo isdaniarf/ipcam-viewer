@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { networkInterfaces } from "node:os";
@@ -78,6 +78,36 @@ function readCamerasFile(camerasFile, errors) {
   return { cameras, server };
 }
 
+export function syncRouteDirectories(staticDirPath, manifest, warnings) {
+  const indexPath = resolve(staticDirPath, "index.html");
+  const markerPath = resolve(staticDirPath, ".routes");
+  if (!existsSync(indexPath)) {
+    if (manifest.some((camera) => camera.route)) {
+      warnings.push(`${staticDirPath} has no index.html yet, so no route folder was made.`);
+    }
+    return [];
+  }
+
+  const previous = existsSync(markerPath)
+    ? readFileSync(markerPath, "utf-8").split("\n").map((line) => line.trim()).filter(Boolean)
+    : [];
+  const wanted = manifest.map((camera) => camera.route).filter(Boolean);
+
+  for (const stale of previous) {
+    if (wanted.includes(stale)) continue;
+    const dir = resolve(staticDirPath, stale);
+    if (existsSync(resolve(dir, "index.html"))) rmSync(dir, { recursive: true, force: true });
+  }
+  for (const route of wanted) {
+    const dir = resolve(staticDirPath, route);
+    mkdirSync(dir, { recursive: true });
+    copyFileSync(indexPath, resolve(dir, "index.html"));
+  }
+  if (wanted.length > 0) writeFileSync(markerPath, `${wanted.join("\n")}\n`);
+  else if (existsSync(markerPath)) rmSync(markerPath, { force: true });
+  return wanted;
+}
+
 export function generate(options = {}) {
   const target = options.target ?? "native";
   if (target !== "native" && target !== "docker") {
@@ -128,7 +158,11 @@ export function generate(options = {}) {
   }
   for (const path of manifestPaths) writeFileSync(path, json);
 
-  return { target, configPath, manifestPaths, manifest, streams, candidates, candidateSource, warnings, api };
+  const routes = target === "native" && existsSync(staticDirPath)
+    ? syncRouteDirectories(staticDirPath, manifest, warnings)
+    : [];
+
+  return { target, configPath, manifestPaths, manifest, streams, candidates, candidateSource, warnings, api, routes };
 }
 
 export function printSummary(result) {
@@ -144,6 +178,9 @@ export function printSummary(result) {
   }
   if (result.target === "native") {
     console.log(`Server: listen ${result.api.listen}, static ${result.api.static_dir}, user ${result.api.username}`);
+  }
+  if (result.routes && result.routes.length > 0) {
+    console.log(`Routes: ${result.routes.map((route) => `/${route}`).join(", ")}`);
   }
   if (result.candidateSource === "runtime") {
     console.log("WebRTC candidates: go2rtc detects the host addresses at run time");

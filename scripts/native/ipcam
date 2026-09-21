@@ -440,12 +440,41 @@ existing_server_value() {
   existing_api_value "$1"
 }
 
+sync_routes() {
+  www="$BUNDLE_DIR/www"
+  [ -d "$www" ] && [ -f "$www/index.html" ] || return 0
+  marker="$www/.routes"
+
+  wanted=$(sed -n 's/.*"route": "\([^"]*\)".*/\1/p' "$BUNDLE_DIR/cameras.json" 2>/dev/null)
+
+  if [ -f "$marker" ]; then
+    while IFS= read -r stale; do
+      [ -n "$stale" ] || continue
+      printf '%s\n' "$wanted" | grep -qx "$stale" && continue
+      [ -f "$www/$stale/index.html" ] && rm -rf "$www/$stale"
+    done < "$marker"
+    rm -f "$marker"
+  fi
+
+  count=0
+  for route in $wanted; do
+    [ -n "$route" ] || continue
+    mkdir -p "$www/$route"
+    cp "$www/index.html" "$www/$route/index.html"
+    printf '%s\n' "$route" >> "$marker"
+    count=$((count + 1))
+  done
+  [ "$count" -gt 0 ] && echo "Routes: $(printf '/%s ' $wanted)"
+  return 0
+}
+
 render_config() {
   [ -f "$BUNDLE_DIR/cameras.ini" ] || die "no cameras.ini in $BUNDLE_DIR"
   [ -f "$BUNDLE_DIR/scripts/config.awk" ] || die "this bundle ships no config.awk. Install a newer release."
   LC_ALL=C awk -v out="$BUNDLE_DIR" -v static_dir=www -f "$BUNDLE_DIR/scripts/config.awk" "$BUNDLE_DIR/cameras.ini" \
     || die "cameras.ini has problems. Fix them and run this again."
   if [ -d "$BUNDLE_DIR/www" ]; then cp "$BUNDLE_DIR/cameras.json" "$BUNDLE_DIR/www/cameras.json"; fi
+  sync_routes
   return 0
 }
 

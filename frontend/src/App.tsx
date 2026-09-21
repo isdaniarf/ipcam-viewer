@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PROTOCOLS, cameraProtocols, type Camera, type Protocol } from "./types/camera";
+import {
+  PROTOCOLS,
+  cameraForRoute,
+  cameraProtocols,
+  type Camera,
+  type Protocol,
+} from "./types/camera";
 import { useCameras } from "./hooks/useCameras";
 import { Header } from "./components/Header";
 import { CameraGrid } from "./components/CameraGrid";
@@ -25,10 +31,16 @@ function storeProtocol(protocol: Protocol): void {
   }
 }
 
+function pathFor(camera: Camera | null): string {
+  return camera && camera.route ? `/${camera.route}/` : "/";
+}
+
 export default function App() {
   const { cameras, loading, error, reload } = useCameras();
   const [fullscreenName, setFullscreenName] = useState<string | null>(null);
   const [preferredProtocol, setPreferredProtocol] = useState<Protocol | null>(readStoredProtocol);
+  const [path, setPath] = useState(() => window.location.pathname);
+  const openerName = useRef<string | null>(null);
 
   const availableProtocols = useMemo(() => {
     const found = new Set<Protocol>();
@@ -48,25 +60,50 @@ export default function App() {
     storeProtocol(next);
   }, []);
 
-  const openerName = useRef<string | null>(null);
+  useEffect(() => {
+    const onPopState = () => {
+      setPath(window.location.pathname);
+      setFullscreenName(null);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   const openFullscreen = useCallback((camera: Camera) => {
     openerName.current = camera.name;
-    setFullscreenName(camera.name);
+    if (camera.route) {
+      const next = pathFor(camera);
+      window.history.pushState({}, "", next);
+      setPath(next);
+      setFullscreenName(null);
+    } else {
+      setFullscreenName(camera.name);
+    }
   }, []);
-  const closeFullscreen = useCallback(() => setFullscreenName(null), []);
+
+  const closeFullscreen = useCallback(() => {
+    setFullscreenName(null);
+    if (window.location.pathname !== "/") {
+      window.history.pushState({}, "", "/");
+      setPath("/");
+    }
+  }, []);
+
+  const routeCamera = cameraForRoute(cameras, path);
+  const fullscreenCamera =
+    routeCamera ??
+    (fullscreenName ? (cameras.find((camera) => camera.name === fullscreenName) ?? null) : null);
 
   useEffect(() => {
-    if (fullscreenName !== null) return;
+    if (fullscreenCamera !== null) return;
     const name = openerName.current;
     if (name === null) return;
     openerName.current = null;
     document.getElementById(`fullscreen-${name}`)?.focus();
-  }, [fullscreenName]);
+  }, [fullscreenCamera]);
 
-  const fullscreenCamera = fullscreenName
-    ? (cameras.find((camera) => camera.name === fullscreenName) ?? null)
-    : null;
+  const unknownRoute =
+    !loading && !error && cameras.length > 0 && path !== "/" && cameraForRoute(cameras, path) === null;
 
   return (
     <div className="min-h-screen bg-gray-950">
@@ -89,6 +126,12 @@ export default function App() {
             Retry
           </button>
         </div>
+      )}
+
+      {unknownRoute && (
+        <p className="px-6 pb-4 text-gray-400">
+          No camera uses the address {path}. It shows every camera instead.
+        </p>
       )}
 
       {!loading && !error && cameras.length === 0 && (

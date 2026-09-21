@@ -74,6 +74,31 @@ password = p
 rtsp = yes
 rtsp.path = /s1
 `,
+  routes: `
+[server]
+password = x
+
+[hallway]
+route = hallway
+host = 10.0.0.1
+username = u
+password = p
+rtsp.path = /s1
+
+[side-gate]
+route = side-gate
+label = Side Gate
+host = 10.0.0.2
+username = u
+password = p
+onvif.port = 2020
+
+[no_route]
+host = 10.0.0.3
+username = u
+password = p
+rtsp.path = /s1
+`,
   tapo_only: `
 [server]
 password = x
@@ -123,6 +148,10 @@ const invalid = {
   empty_file: "\n",
   tapo_without_password: "[server]\npassword = x\n[cam]\nhost = h\ntapo.username = e\n",
   no_protocol: "[server]\npassword = x\n[cam]\nhost = h\nusername = u\npassword = p\n",
+  route_with_space: "[server]\npassword = x\n[cam]\nroute = has space\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
+  route_with_dot: "[server]\npassword = x\n[cam]\nroute = a.b\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
+  route_reserved: "[server]\npassword = x\n[cam]\nroute = api\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
+  route_duplicate: "[server]\npassword = x\n[a]\nroute = same\nhost = h1\nusername = u\npassword = p\nrtsp.path = /s\n[b]\nroute = same\nhost = h2\nusername = u\npassword = p\nrtsp.path = /s\n",
   missing_camera_password: "[server]\npassword = x\n[cam]\nhost = h\nusername = u\nrtsp.path = /s\n",
 };
 

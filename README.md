@@ -282,8 +282,29 @@ number, so a typo cannot pass silently.
 |-----|----------|---------|-------------|
 | `host` | yes | — | The IP address or the hostname of the camera. |
 | `label` | no | From the name | The title on the tile. |
+| `route` | no | — | A path that opens this camera alone, for example `hallway` gives `/hallway`. |
 | `username` | for RTSP and ONVIF | — | The camera account. A protocol key can override it. |
 | `password` | for RTSP and ONVIF | — | The camera password. A protocol key can override it. |
+
+### One camera on its own address
+
+Give a camera a `route` and that path opens it fullscreen, with nothing else on the page:
+
+```ini
+[hallway]
+route = hallway
+host = 192.168.1.54
+```
+
+Then `http://<host>/hallway` shows the hallway camera. It is useful for a bookmark, a wall display or
+a phone home-screen shortcut.
+
+Opening a camera fullscreen from the grid puts the same address in the browser bar, so you can copy
+it, and the back button returns to the grid. A camera with no `route` still opens fullscreen, it just
+leaves the address alone.
+
+Use letters, digits, `_` and `-`. Each route must be unique, and `api`, `assets`, `index.html` and
+`cameras.json` are reserved.
 
 ### Protocol keys
 

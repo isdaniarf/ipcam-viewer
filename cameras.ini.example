@@ -5,6 +5,7 @@ password = choose_a_viewer_password
 
 [hallway]
 label = Hallway
+route = hallway
 host = 192.168.1.54
 username = your_camera_account
 password = your_camera_password

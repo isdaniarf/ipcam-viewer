@@ -16,7 +16,19 @@ export interface StreamIds {
 export interface Camera {
   name: string;
   label: string;
+  route?: string;
   streams: Partial<Record<Protocol, StreamIds>>;
+}
+
+export function routeOf(pathname: string): string | null {
+  const segment = pathname.replace(/^\/+|\/+$/g, "");
+  return segment === "" || segment.includes("/") ? null : segment;
+}
+
+export function cameraForRoute(cameras: Camera[], pathname: string): Camera | null {
+  const route = routeOf(pathname);
+  if (route === null) return null;
+  return cameras.find((camera) => camera.route === route) ?? null;
 }
 
 export function cameraProtocols(camera: Camera): Protocol[] {

@@ -77,6 +77,7 @@ candidates = 1.2.3.4     ; optional, comma separated; default: go2rtc detects at
 
 [hallway]                ; section name = camera name, [A-Za-z0-9_-]+
 label = Hallway          ; optional, default title-cased name
+route = hallway          ; optional; serves this camera alone at /hallway
 host = 192.168.1.54
 username = camera_account
 password = camera_password
@@ -224,6 +225,13 @@ It accepts a comma-separated list.
   generator in discover). Both scan paths reuse an existing `[server]` block rather than replacing it:
   the shell path via `existing_server_value`, the `--deep` path via `--keep-server`, which the CLI
   points at a copy of the old file before it is replaced.
+- A camera `route` becomes a real directory under `www/`, because go2rtc's file server has no SPA
+  fallback: it 404s an unknown path but 301s `/hallway` to `/hallway/` and serves the index there.
+  `generate-config.mjs` and `ipcam render_config` both copy `www/index.html` into `www/<route>/` and
+  track what they made in `www/.routes`, so a removed route is cleaned up. Routes are validated in
+  both readers: `[A-Za-z0-9_-]+`, unique, and not `api`, `assets`, `index.html` or `cameras.json`.
+  `App.tsx` derives the fullscreen camera from `location.pathname`, pushes the route on open and `/`
+  on close, and listens for popstate. It never sets state inside an effect, which the lint forbids.
 - `ipcam discover` merges by default: both scan paths write a candidate to a temp file, and
   `scripts/native/merge-ini.awk` folds it into the existing `cameras.ini`. It matches cameras by
   `host`, reproduces the existing file verbatim (so renames, labels and hand-edited keys survive),

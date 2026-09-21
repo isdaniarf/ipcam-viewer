@@ -94,6 +94,7 @@ export function buildCameras(cameras, errors, warnings) {
   const streams = {};
   const manifest = [];
   const seen = new Set();
+  const routes = new Set();
 
   cameras.forEach((camera, index) => {
     const where = camera && camera.name ? `camera "${camera.name}"` : `camera #${index + 1}`;
@@ -112,6 +113,22 @@ export function buildCameras(cameras, errors, warnings) {
     }
     seen.add(camera.name);
     if (requireText(camera.host, "host", where, errors) === null) return;
+
+    if (camera.route !== undefined) {
+      if (!ROUTE_PATTERN.test(camera.route)) {
+        errors.push(`${where} has an invalid route. Use letters, digits, "_" and "-" only.`);
+        return;
+      }
+      if (RESERVED_ROUTES.has(camera.route)) {
+        errors.push(`${where} uses the reserved route "${camera.route}".`);
+        return;
+      }
+      if (routes.has(camera.route)) {
+        errors.push(`${where} repeats the route "${camera.route}".`);
+        return;
+      }
+      routes.add(camera.route);
+    }
 
     const blocks = {};
     for (const protocol of PROTOCOLS) {
@@ -132,11 +149,10 @@ export function buildCameras(cameras, errors, warnings) {
     }
     if (Object.keys(entry).length === 0) return;
 
-    manifest.push({
-      name: camera.name,
-      label: camera.label ?? toLabel(camera.name),
-      streams: entry,
-    });
+    const record = { name: camera.name, label: camera.label ?? toLabel(camera.name) };
+    if (camera.route !== undefined) record.route = camera.route;
+    record.streams = entry;
+    manifest.push(record);
   });
 
   return { streams, manifest };
@@ -166,7 +182,9 @@ export function manifestJson(manifest) {
 }
 
 const SERVER_KEYS = new Set(["listen", "username", "password", "candidates"]);
-const CAMERA_KEYS = new Set(["label", "host", "username", "password"]);
+const CAMERA_KEYS = new Set(["label", "host", "username", "password", "route"]);
+export const ROUTE_PATTERN = /^[A-Za-z0-9_-]+$/;
+export const RESERVED_ROUTES = new Set(["api", "assets", "index.html", "cameras.json"]);
 const PROTOCOL_KEYS = {
   rtsp: new Set(["port", "path", "sub_path", "username", "password"]),
   onvif: new Set(["port", "profile", "sub_profile", "username", "password"]),

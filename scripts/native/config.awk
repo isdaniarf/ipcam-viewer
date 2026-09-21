@@ -6,7 +6,8 @@ BEGIN {
   nsec = 0; nerr = 0; cur = ""
   proto[1] = "rtsp"; proto[2] = "onvif"; proto[3] = "tapo"; nproto = 3
   split("listen username password candidates", list, " "); for (i in list) server_key[list[i]]
-  split("label host username password", list, " "); for (i in list) camera_key[list[i]]
+  split("label host username password route", list, " "); for (i in list) camera_key[list[i]]
+  split("api assets index.html cameras.json", list, " "); for (i in list) reserved_route[list[i]]
   split("rtsp.port rtsp.path rtsp.sub_path rtsp.username rtsp.password onvif.port onvif.profile onvif.sub_profile onvif.username onvif.password tapo.username tapo.password", list, " ")
   for (i in list) proto_key[list[i]]
 }
@@ -142,6 +143,14 @@ END {
 
     if (need(where, name, "host", "host") == "") continue
     host = get(name, "host")
+
+    if (has(name, "route")) {
+      rt = get(name, "route")
+      if (rt !~ /^[A-Za-z0-9_-]+$/) { err(where " has an invalid route. Use letters, digits, \"_\" and \"-\" only."); continue }
+      if (rt in reserved_route) { err(where " uses the reserved route \"" rt "\"."); continue }
+      if (rt in seen_route) { err(where " repeats the route \"" rt "\"."); continue }
+      seen_route[rt] = 1
+    }
     any = 0
     for (i = 1; i <= nproto; i++) if ((proto[i] in enabled) && enabled[proto[i]] == 1) any = 1
     if (!any) { err(where " enables no protocol. Add an `rtsp:`, `onvif:` or `tapo:` block."); continue }
@@ -187,6 +196,7 @@ END {
     if (entry == "") continue
     cam_name[++ncams] = name
     cam_label[ncams] = has(name, "label") ? get(name, "label") : label_of(name)
+    cam_route[ncams] = has(name, "route") ? get(name, "route") : ""
     cam_entry[ncams] = entry
   }
 
@@ -212,7 +222,9 @@ END {
   if (ncams == 0) { printf "{\n  \"cameras\": []\n}\n" > jfile; close(jfile); exit 0 }
   printf "{\n  \"cameras\": [\n" > jfile
   for (i = 1; i <= ncams; i++) {
-    printf "    {\n      \"name\": %s,\n      \"label\": %s,\n      \"streams\": {\n", jq(cam_name[i]), jq(cam_label[i]) > jfile
+    printf "    {\n      \"name\": %s,\n      \"label\": %s,\n", jq(cam_name[i]), jq(cam_label[i]) > jfile
+    if (cam_route[i] != "") printf "      \"route\": %s,\n", jq(cam_route[i]) > jfile
+    printf "      \"streams\": {\n" > jfile
     m = split(cam_entry[i], blocks, "}, \"")
     for (b = 1; b <= m; b++) {
       piece = blocks[b]
