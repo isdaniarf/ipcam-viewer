@@ -138,6 +138,34 @@ username = u
 password = p
 onvif.port = 2020
 `,
+  proxy: `
+[proxy]
+listen = :80
+realm = My Cameras
+
+[server]
+listen = :8081
+username = admin
+password = adminpw
+
+[view:guest]
+listen = :8082
+username = guest
+password = guestpw
+cameras = gate
+
+[hallway]
+host = 10.0.0.1
+username = u
+password = p
+rtsp.path = /s1
+
+[gate]
+host = 10.0.0.2
+username = u
+password = p
+rtsp.path = /s1
+`,
   allow_paths_override: `
 [server]
 password = x
@@ -206,6 +234,9 @@ const invalid = {
   view_no_listen: "[server]\npassword = x\n[view:g]\npassword = p\ncameras = cam\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
   view_port_clash: "[server]\nlisten = :80\npassword = x\n[view:g]\nlisten = :80\npassword = p\ncameras = cam\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
   view_unknown_key: "[server]\npassword = x\n[view:g]\nlisten = :8080\npassword = p\ncameras = cam\nbogus = 1\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
+  proxy_same_user: "[proxy]\nlisten = :80\n[server]\nlisten = :8081\nusername = same\npassword = a\n[view:g]\nlisten = :8082\nusername = same\npassword = b\ncameras = cam\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
+  proxy_port_clash: "[proxy]\nlisten = :8081\n[server]\nlisten = :8081\nusername = a\npassword = a\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
+  proxy_unknown_key: "[proxy]\nlisten = :80\nbogus = 1\n[server]\npassword = a\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
   view_bad_name: "[server]\npassword = x\n[view:bad name]\nlisten = :8080\npassword = p\ncameras = cam\n[cam]\nhost = h\nusername = u\npassword = p\nrtsp.path = /s\n",
   route_duplicate: "[server]\npassword = x\n[a]\nroute = same\nhost = h1\nusername = u\npassword = p\nrtsp.path = /s\n[b]\nroute = same\nhost = h2\nusername = u\npassword = p\nrtsp.path = /s\n",
   missing_camera_password: "[server]\npassword = x\n[cam]\nhost = h\nusername = u\nrtsp.path = /s\n",
@@ -257,6 +288,7 @@ for (const [name, text] of Object.entries(valid)) {
   const files = ["go2rtc.yaml", "cameras.json"];
   if (existsSync(join(jsOut, "views.txt"))) {
     files.push("views.txt");
+    if (existsSync(join(jsOut, "proxy.conf"))) files.push("proxy.conf");
     for (const view of readFileSync(join(jsOut, "views.txt"), "utf-8").split("\n").filter(Boolean)) {
       files.push(`views/${view}/go2rtc.yaml`, `views/${view}/cameras.json`);
     }

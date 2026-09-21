@@ -127,6 +127,44 @@ function appCommit() {
   return gitOutput(["rev-parse", "--short", "HEAD"]) || "unknown";
 }
 
+const GO_TARGETS = {
+  mac_arm64: ["darwin", "arm64"],
+  mac_amd64: ["darwin", "amd64"],
+  linux_amd64: ["linux", "amd64"],
+  linux_arm64: ["linux", "arm64"],
+  linux_arm: ["linux", "arm"],
+  linux_armv6: ["linux", "arm"],
+  linux_i386: ["linux", "386"],
+};
+
+function buildProxyBinary(outDir, platform) {
+  const target = resolve(outDir, "ipcam-proxy");
+  const source = resolve(root, "proxy");
+  const goTarget = GO_TARGETS[platform];
+  if (!goTarget) {
+    console.warn(`warning: no go target for ${platform}. The bundle carries no proxy.`);
+    return false;
+  }
+  const probe = spawnSync("go", ["version"], { encoding: "utf-8" });
+  if (probe.status !== 0) {
+    if (existsSync(target)) {
+      console.log("Keep the existing ipcam-proxy binary; go is not installed");
+      return true;
+    }
+    console.warn("warning: go is not installed, so the bundle carries no proxy. A [proxy] section needs it.");
+    return false;
+  }
+  const [goos, goarch] = goTarget;
+  const result = spawnSync(
+    "go",
+    ["build", "-ldflags", "-s -w", "-trimpath", "-o", target, "."],
+    { cwd: source, stdio: "inherit", env: { ...process.env, GOOS: goos, GOARCH: goarch, CGO_ENABLED: "0" } },
+  );
+  if (result.status !== 0) throw new Error("building ipcam-proxy failed");
+  chmodSync(target, 0o755);
+  return true;
+}
+
 function writeBundleReadme(outDir, platform, version) {
   const text = `IP Camera Viewer, native bundle
 Platform: ${platform}, go2rtc ${version}
@@ -188,6 +226,10 @@ async function main() {
   );
   copyFileSync(resolve(root, "scripts", "lib", "ini.mjs"), resolve(scriptsDir, "lib", "ini.mjs"));
   copyFileSync(resolve(native, "config.awk"), resolve(scriptsDir, "config.awk"));
+  for (const name of ["launchd-proxy.plist", "systemd-proxy.service"]) {
+    copyFileSync(resolve(native, name), resolve(serviceDir, name));
+  }
+  buildProxyBinary(outDir, platform);
   copyFileSync(resolve(native, "merge-ini.awk"), resolve(scriptsDir, "merge-ini.awk"));
   if (existsSync(resolve(root, "cameras.ini"))) {
     copyFileSync(resolve(root, "cameras.ini"), resolve(outDir, "cameras.ini"));

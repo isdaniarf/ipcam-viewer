@@ -7,6 +7,7 @@ BEGIN {
   proto[1] = "rtsp"; proto[2] = "onvif"; proto[3] = "tapo"; nproto = 3
   split("listen username password candidates allow_paths", list, " "); for (i in list) server_key[list[i]]
   split("listen username password cameras webrtc allow_paths", list, " "); for (i in list) view_key[list[i]]
+  split("listen realm", list, " "); for (i in list) proxy_key[list[i]]
   split("/ /assets /cameras.json /api/ws /api/hls", list, " ")
   ndefault_allow = 0
   for (i = 1; i <= 5; i++) default_allow[++ndefault_allow] = list[i]
@@ -122,7 +123,7 @@ END {
   nstreams = 0; ncams = 0
   for (s = 1; s <= nsec; s++) {
     name = secname[s]
-    if (name == "server" || index(name, "view:") == 1) continue
+    if (name == "server" || name == "proxy" || index(name, "view:") == 1) continue
     where = "camera \"" name "\""
     if (name !~ /^[A-Za-z0-9_-]+$/) { err(where " has an invalid name. Use letters, digits, \"_\" and \"-\" only."); continue }
 
@@ -218,12 +219,26 @@ END {
     exit 1
   }
 
+  proxy_on = 0; proxy_listen = ":80"; proxy_realm = "IP Camera Viewer"
+  if ("proxy" in secidx) {
+    proxy_on = 1
+    for (i = 1; i <= nkeys["proxy"]; i++) {
+      k = keys["proxy", i]
+      if (!(k in proxy_key)) { err("line " vline["proxy", k] ": unknown key \"" k "\" in [proxy]"); continue }
+      if (get("proxy", k) == "") { err("line " vline["proxy", k] ": \"" k "\" has no value"); continue }
+    }
+    if (has("proxy", "listen")) proxy_listen = get("proxy", "listen")
+    if (has("proxy", "realm")) proxy_realm = get("proxy", "realm")
+  }
+  proxy_port = proxy_listen; sub(/.*:/, "", proxy_port)
+
   if (nallow == 0) { for (i = 1; i <= ndefault_allow; i++) allow[++nallow] = default_allow[i] }
   allow_list = ""
   for (i = 1; i <= nallow; i++) allow_list = allow_list (i > 1 ? ", " : "") yq(allow[i])
 
   for (i = 1; i <= ncams; i++) pick[i] = i
-  write_server(out, listen, static_dir, viewer, secret, allow_list, ":8555", ncams, 1)
+  write_server(out, proxy_on ? loopback(listen) : listen, static_dir, viewer, secret, allow_list, ":8555", ncams, 1)
+  if (proxy_on) { nacct = 0; add_account(viewer, secret, loopback(listen)) }
 
   nviews = 0
   for (s = 1; s <= nsec; s++) {
@@ -263,7 +278,8 @@ END {
     if (nsel == 0) { err(vwhere " needs `cameras`, a comma separated list of camera names."); continue }
     vdir = out "/views/" vshort
     system("mkdir -p " vdir)
-    write_server(vdir, vlisten, "www", vuser, vpass, vallow, vwebrtc, nsel, 0)
+    write_server(vdir, proxy_on ? loopback(vlisten) : vlisten, "www", vuser, vpass, vallow, vwebrtc, nsel, 0)
+    if (proxy_on) add_account(vuser, vpass, loopback(vlisten))
     view_names[++nviews] = vshort
   }
 
@@ -273,10 +289,36 @@ END {
     exit 1
   }
 
+  if (proxy_on) {
+    pfile = out "/proxy.conf"
+    printf "listen %s\n", proxy_listen > pfile
+    printf "realm %s\n", proxy_realm > pfile
+    for (i = 1; i <= nacct; i++) printf "user %s %s http://%s\n", acct_user[i], acct_pass[i], acct_backend[i] > pfile
+    close(pfile)
+  } else {
+    system("rm -f " out "/proxy.conf")
+  }
+
   vfile = out "/views.txt"
   printf "" > vfile
   for (i = 1; i <= nviews; i++) printf "%s\n", view_names[i] > vfile
   close(vfile)
+}
+
+function loopback(address,   port) {
+  port = address
+  sub(/.*:/, "", port)
+  return "127.0.0.1:" port
+}
+
+function add_account(user, pass, backend,   port) {
+  if (user in acct_seen) err("the proxy cannot tell two servers apart: both use the user name \"" user "\".")
+  acct_seen[user] = 1
+  port = backend; sub(/.*:/, "", port)
+  if (port == proxy_port) err("a server listens on the proxy's own port " proxy_port ". Give it a different port.")
+  acct_user[++nacct] = user
+  acct_pass[nacct] = pass
+  acct_backend[nacct] = backend
 }
 
 function write_server(dir, lst, sdir, usr, pwd, allows, wrtc, count, all,   i, j, k, idx, yfile, jfile, m, blocks, piece, pname, inner, kv, n2, b, x) {

@@ -22,6 +22,11 @@ jobs:
         with:
           node-version: 22
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: proxy/go.sum
+
       - name: Check the awk and javascript config readers agree
         run: node scripts/test-config-parity.mjs
 
@@ -46,6 +51,15 @@ jobs:
             mkdir -p "$stage/scripts/lib"
             cp scripts/discover-cameras.mjs "$stage/scripts/"
             cp scripts/native/config.awk scripts/native/merge-ini.awk "$stage/scripts/"
+            cp scripts/native/launchd-proxy.plist scripts/native/systemd-proxy.service "$stage/service/"
+            case "$platform" in
+              mac_arm64) goos=darwin; goarch=arm64 ;;
+              mac_amd64) goos=darwin; goarch=amd64 ;;
+              linux_amd64) goos=linux; goarch=amd64 ;;
+              linux_arm64) goos=linux; goarch=arm64 ;;
+              linux_arm) goos=linux; goarch=arm ;;
+            esac
+            ( cd proxy && CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -ldflags "-s -w" -trimpath -o "../$stage/ipcam-proxy" . )
             cp scripts/lib/config-model.mjs scripts/lib/ini.mjs "$stage/scripts/lib/"
             cp scripts/native/launchd.plist scripts/native/systemd.service "$stage/service/"
             chmod +x "$stage/ipcam" "$stage/install.sh"

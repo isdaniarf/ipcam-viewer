@@ -6,6 +6,8 @@ export const DEFAULT_ALLOW_PATHS = ["/", "/assets", "/cameras.json", "/api/ws", 
 export const VIEW_PREFIX = "view:";
 export const VIEW_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 const VIEW_KEYS = new Set(["listen", "username", "password", "cameras", "webrtc", "allow_paths"]);
+const PROXY_KEYS = new Set(["listen", "realm"]);
+export const LOOPBACK = "127.0.0.1";
 
 export function toLabel(name) {
   return name
@@ -225,10 +227,26 @@ function viewFromSection(section, errors) {
 
 export function configFromIni(sections, errors) {
   let server = null;
+  let proxy = null;
   const cameras = [];
   const views = [];
 
   for (const section of sections) {
+    if (section.name === "proxy") {
+      proxy = {};
+      for (const [key, { value, line }] of section.entries) {
+        if (!PROXY_KEYS.has(key)) {
+          errors.push(`line ${line}: unknown key "${key}" in [proxy]`);
+          continue;
+        }
+        if (value === "") {
+          errors.push(`line ${line}: "${key}" has no value`);
+          continue;
+        }
+        proxy[key] = value;
+      }
+      continue;
+    }
     if (section.name.startsWith(VIEW_PREFIX)) {
       const view = viewFromSection(section, errors);
       if (view) views.push(view);
@@ -294,7 +312,47 @@ export function configFromIni(sections, errors) {
     cameras.push(camera);
   }
 
-  return { server, cameras, views };
+  return { server, cameras, views, proxy };
+}
+
+export function toLoopback(address) {
+  const port = String(address).split(":").pop();
+  return `${LOOPBACK}:${port}`;
+}
+
+export function buildProxy(proxy, mainServer, views, errors) {
+  if (!proxy) return null;
+  const listen = proxy.listen ?? ":80";
+  const realm = proxy.realm ?? "IP Camera Viewer";
+  const proxyPort = String(listen).split(":").pop();
+
+  const accounts = [
+    { user: mainServer.username, password: mainServer.password, backend: toLoopback(mainServer.listen) },
+  ];
+  for (const view of views) {
+    accounts.push({ user: view.username, password: view.password, backend: toLoopback(view.listen) });
+  }
+
+  const seenUser = new Set();
+  for (const account of accounts) {
+    if (seenUser.has(account.user)) {
+      errors.push(`the proxy cannot tell two servers apart: both use the user name "${account.user}".`);
+    }
+    seenUser.add(account.user);
+    if (String(account.backend).split(":").pop() === proxyPort) {
+      errors.push(`a server listens on the proxy's own port ${proxyPort}. Give it a different port.`);
+    }
+  }
+
+  return { listen, realm, accounts };
+}
+
+export function emitProxyConfig(proxy) {
+  const lines = [`listen ${proxy.listen}`, `realm ${proxy.realm}`];
+  for (const account of proxy.accounts) {
+    lines.push(`user ${account.user} ${account.password} http://${account.backend}`);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 export function buildViews(views, cameras, mainServer, errors) {

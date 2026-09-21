@@ -21,3 +21,5 @@ bundle/
 
 # OS
 .DS_Store
+bundle/
+proxy/ipcam-proxy

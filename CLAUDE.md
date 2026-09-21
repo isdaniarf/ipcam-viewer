@@ -229,6 +229,15 @@ It accepts a comma-separated list.
   adding a view to `cameras.ini` installs its service and deleting one removes it; `installed_instances`
   finds them by scanning for `io.ipcam-viewer.go2rtc.<view>.plist` / `ipcam-viewer-<view>.service`.
   Loopback skips auth unless `local_auth: true`, so test credential separation over the LAN or set it.
+- `[proxy]` puts every server behind one port. `proxy/main.go` (~130 lines, no deps) reads
+  `proxy.conf`, checks Basic auth, strips the header and forwards to that user's backend with
+  `httputil.ReverseProxy`, which handles the WebSocket upgrade. With `[proxy]` present every go2rtc
+  `api.listen` is rewritten to `127.0.0.1:<same port>`, so backends are unreachable off-box (verified).
+  Passwords stay plaintext in `proxy.conf`, matching `cameras.ini`, which keeps generation deterministic
+  and inside the parity test; Caddy was rejected partly because salted bcrypt would not be. The proxy is
+  instance `@proxy`: label `io.ipcam-viewer.go2rtc.proxy`, its own launchd/systemd templates, and
+  `binary_for`/`template_for` pick its binary and unit. `bundle.mjs` cross-compiles it with the Go
+  toolchain when present; CI always does. Measured: 5.6 MB binary, ~9 MB RSS, video identical through it.
 - `[view:<name>]` sections make extra go2rtc instances, which is the only real per-camera access
   control: a view's config holds only its own streams, so `/api/ws?src=other` returns nothing there.
   Verified live: guest 37 KB for its camera, 0 bytes for one outside the view, owner 90 KB for the same.

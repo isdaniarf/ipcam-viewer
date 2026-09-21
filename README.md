@@ -217,7 +217,7 @@ The command then works from anywhere.
 | `ipcam install [--no-link]` | Install the service, start it, and link the command |
 | `ipcam start`, `ipcam stop`, `ipcam restart` | Control the service |
 | `ipcam status` | Show the state, the pid, the URL and the link |
-| `ipcam logs [view]` | Follow the service log, or one view's log |
+| `ipcam logs [view\|proxy]` | Follow the service log, a view's log, or the proxy's |
 | `ipcam url` | Print the address and the viewer user name |
 | `ipcam update [--build]` | Regenerate the config from `cameras.ini`, then restart |
 | `ipcam discover [--apply\|--replace\|--deep]` | Scan the network and merge what it finds into `cameras.ini`. It applies nothing unless you pass `--apply` |
@@ -322,6 +322,42 @@ admin port and the reverse, which you can check with `curl -u`. Guests use `http
 
 Each view opens its own connection to a shared camera, and most cameras allow only two or three at
 once, so avoid putting the same camera in many views that people watch at the same time.
+
+### One address for everyone
+
+By default each view has its own port, so guests use `http://<host>:8080/`. Add a `[proxy]` section
+and everyone shares one address instead, each with their own login:
+
+```ini
+[proxy]
+listen = :80
+
+[server]
+listen = :8081
+username = admin
+password = admin_password
+
+[view:guest]
+listen = :8082
+username = guest
+password = guest_password
+cameras = house_front
+```
+
+Both open `http://<host>/`. The proxy checks the password and hands each person to their own server.
+Every server moves to loopback automatically, so nothing outside the machine can reach them directly,
+and `listen` on each becomes the loopback port it uses.
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `listen` | no | `:80` | The one address everybody uses. |
+| `realm` | no | `IP Camera Viewer` | The name the browser shows in its login box. |
+
+Each user name must be unique, since the proxy tells people apart by it. `ipcam` runs the proxy
+alongside the rest, `ipcam status` shows it, and `ipcam logs proxy` follows its log.
+
+The proxy is a small program built for this, about 5.6 MB and 9 MB of memory, and it ships in the
+release. It authenticates and forwards, nothing else. Video measured the same through it as without.
 
 ### What the server exposes
 
@@ -575,6 +611,7 @@ Tailscale address of the host, under `[server]`.
 | `scripts/lib/` | The INI reader and the shared config logic. No dependency. |
 | `scripts/native/config.awk` | The same reader in awk. The installed bundle uses it, so it needs no Node.js. |
 | `scripts/native/merge-ini.awk` | It merges a scan into an existing `cameras.ini`, matching on `host`. |
+| `proxy/` | The small proxy that puts every view behind one address. Go, no dependencies. |
 | `scripts/test-config-parity.mjs` | It proves the awk and JavaScript readers agree. CI runs it. |
 | `scripts/native/` | The `ipcam` command, and the launchd and systemd templates for the bundle. |
 | `install.sh` | The `curl \| sh` entry point. It installs a published release. |

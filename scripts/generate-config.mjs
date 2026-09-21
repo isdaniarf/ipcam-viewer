@@ -5,12 +5,15 @@ import { networkInterfaces } from "node:os";
 import { cpSync } from "node:fs";
 import {
   buildCameras,
+  buildProxy,
   buildViews,
   buildGo2rtcConfig,
   buildServer,
   configFromIni,
   emitGo2rtcYaml,
+  emitProxyConfig,
   manifestJson,
+  toLoopback,
 } from "./lib/config-model.mjs";
 import { looksLikeOldYaml, parseIni } from "./lib/ini.mjs";
 
@@ -73,11 +76,11 @@ function readCamerasFile(camerasFile, errors) {
   }
   const parsed = parseIni(text);
   errors.push(...parsed.errors);
-  const { server, cameras, views } = configFromIni(parsed.sections, errors);
+  const { server, cameras, views, proxy } = configFromIni(parsed.sections, errors);
   if (cameras.length === 0 && errors.length === 0) {
     errors.push(`${camerasFile} names no camera. Add a [camera_name] section.`);
   }
-  return { cameras, server, views };
+  return { cameras, server, views, proxy };
 }
 
 export function syncRouteDirectories(staticDirPath, manifest, warnings) {
@@ -110,7 +113,7 @@ export function syncRouteDirectories(staticDirPath, manifest, warnings) {
   return wanted;
 }
 
-function writeView({ view, cameras, outDir, staticDirPath, candidates, warnings }) {
+function writeView({ view, cameras, outDir, staticDirPath, candidates, warnings, proxied }) {
   const subset = cameras.filter((camera) => view.cameras.includes(camera.name));
   const errors = [];
   const { streams, manifest } = buildCameras(subset, errors, warnings);
@@ -137,7 +140,7 @@ function writeView({ view, cameras, outDir, staticDirPath, candidates, warnings 
   const config = buildGo2rtcConfig({
     streams,
     api: {
-      listen: view.listen,
+      listen: proxied ? toLoopback(view.listen) : view.listen,
       static_dir: "www",
       allow_paths: view.allowPaths,
       username: view.username,
@@ -165,16 +168,17 @@ export function generate(options = {}) {
   const errors = [];
   const warnings = [];
 
-  const { cameras, server, views: rawViews } = readCamerasFile(camerasFile, errors);
+  const { cameras, server, views: rawViews, proxy: rawProxy } = readCamerasFile(camerasFile, errors);
   const { streams, manifest } = buildCameras(cameras, errors, warnings);
   const serverConfig = target === "native" ? buildServer(server, errors) : null;
   const views = target === "native" ? buildViews(rawViews ?? [], cameras, server, errors) : [];
+  const proxy = target === "native" ? buildProxy(rawProxy, serverConfig, views, errors) : null;
   if (errors.length > 0) throw new ConfigError(errors);
 
   const { candidates, candidateSource } = webrtcCandidates(server, target, warnings);
   const api = target === "native"
     ? {
-        listen: serverConfig.listen,
+        listen: proxy ? toLoopback(serverConfig.listen) : serverConfig.listen,
         static_dir: staticDir,
         allow_paths: serverConfig.allowPaths,
         username: serverConfig.username,
@@ -219,7 +223,7 @@ export function generate(options = {}) {
     }
     for (const view of views) {
       viewResults.push(
-        writeView({ view, cameras, outDir, staticDirPath, candidates, warnings }),
+        writeView({ view, cameras, outDir, staticDirPath, candidates, warnings, proxied: Boolean(proxy) }),
       );
     }
   } else {
@@ -228,7 +232,11 @@ export function generate(options = {}) {
   }
   writeFileSync(resolve(outDir, "views.txt"), views.map((view) => view.name).join("\n") + (views.length ? "\n" : ""));
 
-  return { target, configPath, manifestPaths, manifest, streams, candidates, candidateSource, warnings, api, routes, views: viewResults };
+  const proxyPath = resolve(outDir, "proxy.conf");
+  if (proxy) writeFileSync(proxyPath, emitProxyConfig(proxy));
+  else if (existsSync(proxyPath)) rmSync(proxyPath, { force: true });
+
+  return { target, configPath, manifestPaths, manifest, streams, candidates, candidateSource, warnings, api, routes, views: viewResults, proxy };
 }
 
 export function printSummary(result) {
@@ -244,6 +252,9 @@ export function printSummary(result) {
   }
   if (result.target === "native") {
     console.log(`Server: listen ${result.api.listen}, static ${result.api.static_dir}, user ${result.api.username}`);
+  }
+  if (result.proxy) {
+    console.log(`Proxy: ${result.proxy.listen}, ${result.proxy.accounts.length} user(s); every server moved to loopback`);
   }
   for (const view of result.views ?? []) {
     console.log(`View ${view.name}: ${view.listen}, ${view.cameras.length} camera(s): ${view.cameras.join(", ")}`);

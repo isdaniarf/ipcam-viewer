@@ -39,7 +39,13 @@ yaml_value() {
   sed -n "/^api:/,/^[a-z]/p" "$CONFIG" | sed -n "s/^  $1: *//p" | head -1 | tr -d '"'"'"
 }
 
-listen_address() { yaml_value listen; }
+listen_address() {
+  if [ -f "$BUNDLE_DIR/proxy.conf" ]; then
+    sed -n 's/^listen //p' "$BUNDLE_DIR/proxy.conf" | head -1
+  else
+    yaml_value listen
+  fi
+}
 viewer_user() { v=$(yaml_value username); [ -n "$v" ] && printf '%s\n' "$v" || printf 'viewer\n'; }
 
 listen_port() {
@@ -119,9 +125,9 @@ install_macos() {
   instance=${1:-}
   tmp=$(mktemp) || die "could not write a temporary file"
   sed -e "s#{{BUNDLE_DIR}}#$(dir_for "$instance")#g" \
-      -e "s#{{BINARY}}#$BUNDLE_DIR/go2rtc#g" \
+      -e "s#{{BINARY}}#$(binary_for "$instance")#g" \
       -e "s#{{LABEL}}#$(label_for "$instance")#g" \
-      -e "s#{{USER}}#$(id -un)#g" "$BUNDLE_DIR/service/launchd.plist" > "$tmp"
+      -e "s#{{USER}}#$(id -un)#g" "$(template_for "$instance" launchd plist)" > "$tmp"
   stop_macos "$instance"
   sudo install -o root -g wheel -m 644 "$tmp" "$(plist_path "$instance")"
   rm -f "$tmp"
@@ -143,7 +149,8 @@ state_macos() {
 # root owns the log, because the daemon runs as root.
 logs_macos() {
   target=$LOG
-  [ -n "${1:-}" ] && target="$BUNDLE_DIR/views/$1/go2rtc.log"
+  if [ "${1:-}" = proxy ]; then target="$BUNDLE_DIR/proxy.log"
+  elif [ -n "${1:-}" ]; then target="$BUNDLE_DIR/views/$1/go2rtc.log"; fi
   [ -f "$target" ] || die "no log file at $target"
   if [ -r "$target" ]; then tail -n 50 -f "$target"; else sudo tail -n 50 -f "$target"; fi
 }
@@ -158,9 +165,9 @@ stop_linux() { sudo systemctl stop "$(unit_name_for "${1:-}")" 2>/dev/null || tr
 install_linux() {
   instance=${1:-}
   sed -e "s#{{BUNDLE_DIR}}#$(dir_for "$instance")#g" \
-      -e "s#{{BINARY}}#$BUNDLE_DIR/go2rtc#g" \
+      -e "s#{{BINARY}}#$(binary_for "$instance")#g" \
       -e "s#{{LABEL}}#$(label_for "$instance")#g" \
-      -e "s#{{USER}}#$(id -un)#g" "$BUNDLE_DIR/service/systemd.service" |
+      -e "s#{{USER}}#$(id -un)#g" "$(template_for "$instance" systemd service)" |
     sudo tee "$(unit_path "$instance")" >/dev/null
   sudo systemctl daemon-reload
   sudo systemctl enable --now "$(unit_name_for "$instance")"
@@ -258,7 +265,8 @@ cmd_install() {
 cmd_uninstall() {
   for_each_instance uninstall_instance
   for old_view in $(installed_instances); do
-    [ -n "$old_view" ] && "uninstall_$OS" "$old_view"
+    [ -n "$old_view" ] || continue
+    if [ "$old_view" = proxy ]; then "uninstall_$OS" "$PROXY_INSTANCE"; else "uninstall_$OS" "$old_view"; fi
   done
   do_unlink
   echo "Service removed."
@@ -292,6 +300,9 @@ cmd_status() {
   esac
   echo "URL:     $(base_url)"
   echo "User:    $(viewer_user)"
+  if proxy_enabled; then
+    echo "Proxy:   $("state_$OS" "$PROXY_INSTANCE") on $(listen_address), users: $(sed -n 's/^user \([^ ]*\) .*/\1/p' "$BUNDLE_DIR/proxy.conf" | tr '\n' ' ')"
+  fi
   for view in $(views_list); do
     [ -n "$view" ] || continue
     port=$(view_port "$view")
@@ -484,6 +495,8 @@ installed_instances() {
   fi
 }
 
+installed_views() { installed_instances | grep -v '^proxy$' || true; }
+
 ensure_instance() {
   instance=$1
   if [ "$OS" = macos ]; then
@@ -497,7 +510,11 @@ ensure_instance() {
 
 prune_instances() {
   current=$(views_list)
-  for old_view in $(installed_instances); do
+  if ! proxy_enabled && [ -f "$(plist_path "$PROXY_INSTANCE")" ]; then
+    echo "Removing the proxy service, which the config no longer asks for"
+    "uninstall_$OS" "$PROXY_INSTANCE"
+  fi
+  for old_view in $(installed_views); do
     [ -n "$old_view" ] || continue
     printf '%s\n' "$current" | grep -qx "$old_view" && continue
     echo "Removing the service for the view $old_view, which the config no longer names"
@@ -513,6 +530,8 @@ for_each_instance() {
     [ -n "$view" ] || continue
     "$action" "$view"
   done
+  proxy_enabled && "$action" "$PROXY_INSTANCE"
+  return 0
 }
 
 existing_api_value() {
@@ -573,12 +592,39 @@ views_list() {
   cat "$BUNDLE_DIR/views.txt"
 }
 
+PROXY_INSTANCE="@proxy"
+
 label_for() {
-  if [ -z "$1" ]; then printf '%s\n' "$LABEL"; else printf '%s.%s\n' "$LABEL" "$1"; fi
+  case ${1:-} in
+    "") printf '%s\n' "$LABEL" ;;
+    "$PROXY_INSTANCE") printf '%s.proxy\n' "$LABEL" ;;
+    *) printf '%s.%s\n' "$LABEL" "$1" ;;
+  esac
 }
 
+proxy_enabled() { [ -f "$BUNDLE_DIR/proxy.conf" ]; }
+
 dir_for() {
-  if [ -z "$1" ]; then printf '%s\n' "$BUNDLE_DIR"; else printf '%s/views/%s\n' "$BUNDLE_DIR" "$1"; fi
+  case ${1:-} in
+    ""|"$PROXY_INSTANCE") printf '%s\n' "$BUNDLE_DIR" ;;
+    *) printf '%s/views/%s\n' "$BUNDLE_DIR" "$1" ;;
+  esac
+}
+
+template_for() {
+  if [ "${1:-}" = "$PROXY_INSTANCE" ]; then
+    printf '%s/service/%s-proxy.%s\n' "$BUNDLE_DIR" "$2" "$3"
+  else
+    printf '%s/service/%s.%s\n' "$BUNDLE_DIR" "$2" "$3"
+  fi
+}
+
+binary_for() {
+  if [ "${1:-}" = "$PROXY_INSTANCE" ]; then
+    printf '%s/ipcam-proxy\n' "$BUNDLE_DIR"
+  else
+    printf '%s/go2rtc\n' "$BUNDLE_DIR"
+  fi
 }
 
 sync_view_static() {
@@ -830,7 +876,7 @@ Usage: ipcam <command> [options]
   stop                 Stop the service
   restart              Restart the service
   status               Show the service state, the URL and the link
-  logs [view]          Follow the service log, or a view's log
+  logs [view|proxy]    Follow the service log, a view's log, or the proxy's
   url                  Print the address and the viewer user name
   update [--build]     Regenerate the config from cameras.ini, then restart.
                        --build also rebuilds the page. It needs the repository.
