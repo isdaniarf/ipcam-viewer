@@ -229,6 +229,11 @@ It accepts a comma-separated list.
   adding a view to `cameras.ini` installs its service and deleting one removes it; `installed_instances`
   finds them by scanning for `io.ipcam-viewer.go2rtc.<view>.plist` / `ipcam-viewer-<view>.service`.
   Loopback skips auth unless `local_auth: true`, so test credential separation over the LAN or set it.
+- `test-config-parity.mjs` runs three kinds of check, and the distinction matters: parity (both
+  readers emit byte-identical files), refusal (both reject a bad config), and shape (assertions about
+  what the output actually says, run against BOTH readers' output). Parity alone cannot catch a
+  mistake made identically in both readers, which is how views nearly kept an RTSP listener. Add a
+  shape assertion whenever a generated value must hold, not merely match.
 - Ports are validated by number, not by the whole address: web ports must be unique across the main
   server and all views, and `webrtc` ports likewise (seeded with 8555 for the main server) and must not
   collide with a web port. Without this a second instance binds nothing for WebRTC, logs nothing, keeps

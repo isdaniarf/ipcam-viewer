@@ -325,6 +325,72 @@ for (const [name, text] of Object.entries(invalid)) {
   if (!js.ok && !awk.ok) console.log(`ok   invalid/${name} (both refuse)`);
 }
 
+// Parity proves the two readers agree. These check what they agree ON, so a
+// mistake made identically in both is still caught.
+const PROXIED_VIEWS = `
+[proxy]
+listen = :80
+
+[server]
+listen = :8081
+username = admin
+password = adminpw
+
+[view:guest]
+listen = :8082
+username = guest
+password = guestpw
+cameras = cam
+
+[cam]
+host = 10.0.0.1
+username = u
+password = p
+rtsp.path = /s1
+`;
+
+function blockValue(text, block, key) {
+  const lines = text.split("\n");
+  const start = lines.findIndex((line) => line === `${block}:`);
+  if (start === -1) return null;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (!lines[i].startsWith("  ")) break;
+    const match = new RegExp(`^  ${key}: (.*)$`).exec(lines[i]);
+    if (match) return match[1].replace(/^'|'$/g, "");
+  }
+  return null;
+}
+
+function renderBoth(text) {
+  const dir = mkdtempSync(join(tmpdir(), "shape-"));
+  const iniPath = join(dir, "cameras.ini");
+  writeFileSync(iniPath, text);
+  const out = {};
+  for (const reader of ["js", "awk"]) {
+    const target = join(dir, reader);
+    mkdirSync(join(target, "www"), { recursive: true });
+    writeFileSync(join(target, "www", "index.html"), "<html></html>");
+    const result = reader === "js" ? runJs(iniPath, target) : runAwk(iniPath, target);
+    if (!result.ok) return { dir, error: `${reader} refused it` };
+    out[reader] = target;
+  }
+  return { dir, out };
+}
+
+const shapeChecks = [
+  ["the main server keeps its own RTSP listener", (d, r) => blockValue(readFileSync(join(d[r], "go2rtc.yaml"), "utf-8"), "rtsp", "listen") === ":8554"],
+  ["a view has no RTSP listener at all", (d, r) => blockValue(readFileSync(join(d[r], "views/guest/go2rtc.yaml"), "utf-8"), "rtsp", "listen") === ""],
+  ["the main server keeps the default media port", (d, r) => blockValue(readFileSync(join(d[r], "go2rtc.yaml"), "utf-8"), "webrtc", "listen") === ":8555"],
+  ["a view gets a media port of its own", (d, r) => blockValue(readFileSync(join(d[r], "views/guest/go2rtc.yaml"), "utf-8"), "webrtc", "listen") === ":8556"],
+  ["a proxied server moves to loopback", (d, r) => blockValue(readFileSync(join(d[r], "go2rtc.yaml"), "utf-8"), "api", "listen") === "127.0.0.1:8081"],
+  ["a proxied view moves to loopback", (d, r) => blockValue(readFileSync(join(d[r], "views/guest/go2rtc.yaml"), "utf-8"), "api", "listen") === "127.0.0.1:8082"],
+  ["every server restricts its paths", (d, r) => ["go2rtc.yaml", "views/guest/go2rtc.yaml"].every((f) => readFileSync(join(d[r], f), "utf-8").includes("allow_paths: ['/', '/assets'"))],
+  ["a view carries only the cameras it was given", (d, r) => {
+    const manifest = JSON.parse(readFileSync(join(d[r], "views/guest/cameras.json"), "utf-8"));
+    return manifest.cameras.length === 1 && manifest.cameras[0].name === "cam";
+  }],
+];
+
 const mergeProgram = resolve(here, "native", "merge-ini.awk");
 
 function runMerge(existing, candidate) {
@@ -396,6 +462,21 @@ const mergeChecks = [
   }],
 ];
 
+const shape = renderBoth(PROXIED_VIEWS);
+if (shape.error) {
+  report("shape", "render", shape.error);
+} else {
+  for (const [name, check] of shapeChecks) {
+    for (const reader of ["js", "awk"]) {
+      let ok = false;
+      try { ok = check(shape.out, reader); } catch (error) { ok = false; }
+      if (ok) console.log(`ok   shape/${reader}/${name}`);
+      else report("shape", `${reader}/${name}`, "the emitted config does not match");
+    }
+  }
+}
+rmSync(shape.dir, { recursive: true, force: true });
+
 const merged = runMerge(BASE, SCAN);
 if (merged.status !== 0) report("merge", "run", `awk exited ${merged.status}: ${merged.report}`);
 for (const [name, check] of mergeChecks) {
@@ -406,6 +487,6 @@ for (const [name, check] of mergeChecks) {
 }
 
 rmSync(scratch, { recursive: true, force: true });
-const total = Object.keys(valid).length + Object.keys(invalid).length + mergeChecks.length;
+const total = Object.keys(valid).length + Object.keys(invalid).length + mergeChecks.length + shapeChecks.length * 2;
 console.log(failures === 0 ? `\nparity: all ${total} cases agree` : `\nparity: ${failures} failure(s)`);
 process.exit(failures === 0 ? 0 : 1);
