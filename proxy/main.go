@@ -6,7 +6,10 @@ package main
 
 import (
 	"bufio"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"log"
@@ -15,7 +18,9 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type account struct {
@@ -28,6 +33,81 @@ type config struct {
 	listen   string
 	realm    string
 	accounts map[string]*account
+	key      []byte
+}
+
+// A browser does not reliably attach cached Basic credentials to a WebSocket
+// handshake, so /api/ws drew a second password prompt after the page had
+// already been unlocked. It does send same-origin cookies on that handshake,
+// so a successful Basic auth mints one and the handshake rides on it.
+const (
+	cookieName = "ipcam_session"
+	sessionTTL = 7 * 24 * time.Hour
+)
+
+// The key comes from the passwords themselves. It survives a restart without a
+// file to keep, and changing any password invalidates every session it signed.
+func deriveKey(accounts map[string]*account) []byte {
+	names := make([]string, 0, len(accounts))
+	for name := range accounts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	sum := sha256.New()
+	for _, name := range names {
+		fmt.Fprintf(sum, "%s\x00%s\x00", name, accounts[name].password)
+	}
+	return sum.Sum(nil)
+}
+
+func sign(key []byte, user string, expiry int64) string {
+	mac := hmac.New(sha256.New, key)
+	fmt.Fprintf(mac, "%s\n%d", user, expiry)
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// session returns the account a valid cookie names, if it names one.
+func (c *config) session(r *http.Request) (string, *account) {
+	cookie, err := r.Cookie(cookieName)
+	if err != nil {
+		return "", nil
+	}
+	parts := strings.Split(cookie.Value, ".")
+	if len(parts) != 3 {
+		return "", nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return "", nil
+	}
+	expiry, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || time.Now().Unix() >= expiry {
+		return "", nil
+	}
+	user := string(raw)
+	if !hmac.Equal([]byte(parts[2]), []byte(sign(c.key, user, expiry))) {
+		return "", nil
+	}
+	acct, found := c.accounts[user]
+	if !found {
+		return "", nil
+	}
+	return user, acct
+}
+
+func (c *config) grant(w http.ResponseWriter, r *http.Request, user string) {
+	expiry := time.Now().Add(sessionTTL).Unix()
+	value := fmt.Sprintf("%s.%d.%s",
+		base64.RawURLEncoding.EncodeToString([]byte(user)), expiry, sign(c.key, user, expiry))
+	http.SetCookie(w, &http.Cookie{
+		Name:     cookieName,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"),
+		Expires:  time.Unix(expiry, 0),
+	})
 }
 
 func readConfig(path string) (*config, error) {
@@ -84,16 +164,25 @@ func readConfig(path string) (*config, error) {
 	if len(cfg.accounts) == 0 {
 		return nil, fmt.Errorf("%s names no user", path)
 	}
+	cfg.key = deriveKey(cfg.accounts)
 	return cfg, nil
 }
 
 func (c *config) handler() http.Handler {
 	challenge := fmt.Sprintf("Basic realm=%q, charset=\"UTF-8\"", c.realm)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The cookie comes first, because the WebSocket handshake carries
+		// nothing else.
+		if _, acct := c.session(r); acct != nil {
+			r.Header.Del("Authorization")
+			acct.proxy.ServeHTTP(w, r)
+			return
+		}
 		user, password, ok := r.BasicAuth()
 		if ok {
 			if acct, found := c.accounts[user]; found &&
 				subtle.ConstantTimeCompare([]byte(password), []byte(acct.password)) == 1 {
+				c.grant(w, r, user)
 				// The backend listens on loopback and trusts it, so the
 				// credential stops here rather than travelling further.
 				r.Header.Del("Authorization")

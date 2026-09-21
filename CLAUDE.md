@@ -255,6 +255,18 @@ It accepts a comma-separated list.
   instance `@proxy`: label `io.ipcam-viewer.go2rtc.proxy`, its own launchd/systemd templates, and
   `binary_for`/`template_for` pick its binary and unit. `bundle.mjs` cross-compiles it with the Go
   toolchain when present; CI always does. Measured: 5.6 MB binary, ~9 MB RSS, video identical through it.
+- A successful Basic auth also mints an `ipcam_session` cookie, and the proxy accepts that cookie in
+  place of the header. Without it the page asked for the password **twice**: a browser does not
+  reliably attach cached Basic credentials to a WebSocket handshake, so `/api/ws` came back 401 after
+  the page itself was already unlocked, and the browser raised a second dialog. Browsers do send
+  same-origin cookies on that handshake. The cookie is `base64url(user).expiry.HMAC-SHA256`, valid for
+  7 days, `HttpOnly`, `SameSite=Lax`, and `Secure` only when the request arrived over TLS, because
+  marking it Secure on a plain-HTTP LAN would make the browser drop it. The signing key is derived
+  from the account passwords themselves, so it needs no state on disk, survives a restart, and any
+  password change invalidates every outstanding session — every account's, not just the one that
+  changed, since the key covers them all. Verified: cookie alone returns 200 and upgrades the
+  WebSocket to 101, a tampered or malformed cookie returns 401, the two accounts get different
+  cookies that still reach only their own backend, and a rotated password rejects the old cookies.
 - `[view:<name>]` sections make extra go2rtc instances, which is the only real per-camera access
   control: a view's config holds only its own streams, so `/api/ws?src=other` returns nothing there.
   Verified live: guest 37 KB for its camera, 0 bytes for one outside the view, owner 90 KB for the same.
