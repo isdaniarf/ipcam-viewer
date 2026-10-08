@@ -8,11 +8,20 @@ It plays each stream with WebRTC. It falls back to MSE, and then to HLS.
 ## Features
 
 - One responsive grid for all cameras.
+- Eight layout presets: Grid, Spotlight, Center stage, Two large, Stack, Three large, Four large
+  and Theater. A preset makes one or more cameras large and the other cameras small.
+- A free camera order. Drag a tile onto a different tile to swap the two cameras. The arrow keys
+  on the move handle of a tile also move the camera.
+- A limit on the number of cameras for each page, with page buttons. The Arrange panel changes the
+  full order and hides the cameras that you do not need.
+- A "Fit to screen" mode. All the tiles on the page fit in the window, with no scroll.
 - Low latency playback with WebRTC.
 - A protocol selector for RTSP, ONVIF and Tapo. The app keeps your choice.
 - A fullscreen view with audio and player controls.
 - A status badge for each tile: connecting, live or offline.
-- Low bandwidth use. The grid plays the substream. It pauses a tile when the tile leaves the screen.
+- Low bandwidth use. The grid plays the substream. A tile that is 720 px wide or more plays the main
+  stream. The grid pauses a tile when the tile leaves the screen. A camera on a different page or
+  a hidden camera plays no stream.
 - One process at run time. go2rtc serves the page, the camera list and the streams.
 - A password protects the page and the streams.
 - An `ipcam` command controls the service from anywhere in your shell.

@@ -7,7 +7,17 @@ import {
   type Protocol,
 } from "./types/camera";
 import { useCameras } from "./hooks/useCameras";
+import { useLayoutSettings } from "./hooks/useLayoutSettings";
+import {
+  arrangeCameras,
+  keepUnknownNames,
+  moveName,
+  shiftName,
+  swapNames,
+} from "./lib/arrangement";
 import { Header } from "./components/Header";
+import { LayoutToolbar } from "./components/LayoutToolbar";
+import { ArrangePanel } from "./components/ArrangePanel";
 import { CameraGrid } from "./components/CameraGrid";
 import { FullscreenOverlay } from "./components/FullscreenOverlay";
 
@@ -41,6 +51,92 @@ export default function App() {
   const [preferredProtocol, setPreferredProtocol] = useState<Protocol | null>(readStoredProtocol);
   const [path, setPath] = useState(() => window.location.pathname);
   const openerName = useRef<string | null>(null);
+  const { settings, updateSettings } = useLayoutSettings();
+  const [pageIndex, setPageIndex] = useState(0);
+  const [arrangeOpen, setArrangeOpen] = useState(false);
+  const [announcement, setAnnouncement] = useState("");
+
+  const arranged = useMemo(
+    () => arrangeCameras(cameras, settings.order),
+    [cameras, settings.order],
+  );
+  const hidden = useMemo(() => new Set(settings.hidden), [settings.hidden]);
+  const shown = useMemo(
+    () => arranged.filter((camera) => !hidden.has(camera.name)),
+    [arranged, hidden],
+  );
+  const pageSize = settings.pageSize ?? Math.max(shown.length, 1);
+  const pageCount = Math.max(1, Math.ceil(shown.length / pageSize));
+  const page = Math.min(pageIndex, pageCount - 1);
+  const pageCameras = shown.slice(page * pageSize, (page + 1) * pageSize);
+
+  const saveOrder = useCallback(
+    (names: string[]) => updateSettings({ order: keepUnknownNames(names, settings.order) }),
+    [settings.order, updateSettings],
+  );
+
+  const labelOf = useCallback(
+    (name: string) => cameras.find((camera) => camera.name === name)?.label ?? name,
+    [cameras],
+  );
+
+  const swapCameras = useCallback(
+    (name: string, otherName: string) => {
+      saveOrder(swapNames(arranged.map((camera) => camera.name), name, otherName));
+      setAnnouncement(`${labelOf(name)} and ${labelOf(otherName)} changed places.`);
+    },
+    [arranged, labelOf, saveOrder],
+  );
+
+  const moveShownCamera = useCallback(
+    (name: string, delta: number) => {
+      const from = shown.findIndex((camera) => camera.name === name);
+      const to = from + delta;
+      if (from < 0 || to < 0 || to >= shown.length) return;
+      saveOrder(swapNames(arranged.map((camera) => camera.name), name, shown[to].name));
+      setPageIndex(Math.floor(to / pageSize));
+      setAnnouncement(`${labelOf(name)} is now at position ${to + 1} of ${shown.length}.`);
+      requestAnimationFrame(() => document.getElementById(`move-${name}`)?.focus());
+    },
+    [arranged, labelOf, pageSize, saveOrder, shown],
+  );
+
+  const reorderCamera = useCallback(
+    (name: string, target: string, after: boolean) =>
+      saveOrder(moveName(arranged.map((camera) => camera.name), name, target, after)),
+    [arranged, saveOrder],
+  );
+
+  const shiftCamera = useCallback(
+    (name: string, delta: number) =>
+      saveOrder(shiftName(arranged.map((camera) => camera.name), name, delta)),
+    [arranged, saveOrder],
+  );
+
+  const toggleHidden = useCallback(
+    (name: string) =>
+      updateSettings({
+        hidden: hidden.has(name)
+          ? settings.hidden.filter((other) => other !== name)
+          : [...settings.hidden, name],
+      }),
+    [hidden, settings.hidden, updateSettings],
+  );
+
+  const resetArrangement = useCallback(
+    () => updateSettings({ order: [], hidden: [] }),
+    [updateSettings],
+  );
+
+  const changePageSize = useCallback(
+    (next: number | null) => {
+      updateSettings({ pageSize: next });
+      setPageIndex(0);
+    },
+    [updateSettings],
+  );
+
+  const closeArrange = useCallback(() => setArrangeOpen(false), []);
 
   const availableProtocols = useMemo(() => {
     const found = new Set<Protocol>();
@@ -71,6 +167,7 @@ export default function App() {
 
   const openFullscreen = useCallback((camera: Camera) => {
     openerName.current = camera.name;
+    setArrangeOpen(false);
     if (camera.route) {
       const next = pathFor(camera);
       window.history.pushState({}, "", next);
@@ -106,13 +203,29 @@ export default function App() {
     !loading && !error && cameras.length > 0 && path !== "/" && cameraForRoute(cameras, path) === null;
 
   return (
-    <div className="min-h-screen bg-gray-950">
+    <div className="flex h-dvh flex-col bg-gray-950">
       <Header
         cameraCount={cameras.length}
         availableProtocols={availableProtocols}
         selectedProtocol={protocol}
         onProtocolChange={selectProtocol}
       />
+
+      {cameras.length > 1 && (
+        <LayoutToolbar
+          layout={settings.layout}
+          pageSize={settings.pageSize}
+          fit={settings.fit}
+          page={page}
+          pageCount={pageCount}
+          arrangeOpen={arrangeOpen}
+          onLayoutChange={(layout) => updateSettings({ layout })}
+          onPageSizeChange={changePageSize}
+          onFitChange={(fit) => updateSettings({ fit })}
+          onPageChange={setPageIndex}
+          onArrangeToggle={() => setArrangeOpen((open) => !open)}
+        />
+      )}
 
       {loading && <p className="px-6 pb-4 text-gray-400">It loads the cameras...</p>}
 
@@ -138,9 +251,40 @@ export default function App() {
         <p className="px-6 pb-4 text-gray-400">It found no camera.</p>
       )}
 
-      {!fullscreenCamera && (
-        <CameraGrid cameras={cameras} protocol={protocol} onFullscreen={openFullscreen} />
+      {cameras.length > 0 && shown.length === 0 && (
+        <p className="px-6 pb-4 text-gray-400">
+          All cameras are hidden. Click Arrange to show a camera.
+        </p>
       )}
+
+      {!fullscreenCamera && (
+        <CameraGrid
+          cameras={pageCameras}
+          protocol={protocol}
+          layout={settings.layout}
+          fit={settings.fit}
+          onFullscreen={openFullscreen}
+          onSwap={swapCameras}
+          onMove={moveShownCamera}
+        />
+      )}
+
+      {arrangeOpen && cameras.length > 1 && (
+        <ArrangePanel
+          cameras={arranged}
+          hidden={hidden}
+          pageSize={settings.pageSize}
+          onClose={closeArrange}
+          onReorder={reorderCamera}
+          onShift={shiftCamera}
+          onToggleHidden={toggleHidden}
+          onReset={resetArrangement}
+        />
+      )}
+
+      <p className="sr-only" aria-live="polite">
+        {announcement}
+      </p>
 
       {fullscreenCamera && (
         <FullscreenOverlay

@@ -12,16 +12,24 @@ Multi-camera IP video streaming viewer. React frontend talks to go2rtc for RTSP/
 │       ├── App.tsx              # Root component, manages state
 │       ├── components/
 │       │   ├── Header.tsx       # Title bar + protocol selector
-│       │   ├── CameraGrid.tsx   # Responsive grid layout
+│       │   ├── LayoutToolbar.tsx # Layout presets, page size, fit, pages
+│       │   ├── LayoutIcon.tsx   # Small SVG preview of a preset
+│       │   ├── ArrangePanel.tsx # Full camera order + hide/show
+│       │   ├── CameraGrid.tsx   # Places the tiles of one page
 │       │   ├── CameraCard.tsx   # Single camera tile
 │       │   ├── StreamStatus.tsx # Connecting / live / offline badge
 │       │   ├── VideoPlayer.tsx  # <camera-video> wrapper
 │       │   └── FullscreenOverlay.tsx
 │       ├── hooks/
-│       │   └── useCameras.ts    # Fetches /cameras.json, retries on failure
+│       │   ├── useCameras.ts    # Fetches /cameras.json, retries on failure
+│       │   ├── useLayoutSettings.ts # Layout, page size, fit, order, hidden (localStorage)
+│       │   ├── usePointerReorder.ts # Pointer drag for the grid and the panel
+│       │   └── useElementSize.ts
 │       ├── types/
 │       │   └── camera.ts        # Camera & Protocol types
 │       └── lib/
+│           ├── layouts.ts       # Presets, tile placement, grid size
+│           ├── arrangement.ts   # Camera order helpers
 │           ├── video-rtc.js     # VideoRTC v1.6.0, with local changes
 │           ├── video-rtc.d.ts   # Types for the vendored player
 │           └── camera-video.ts  # <camera-video> subclass, LAN defaults
@@ -174,6 +182,20 @@ It accepts a comma-separated list.
 - `VideoPlayer.tsx` creates the element, sets the properties, and then appends it. This order matters,
   because the player reads `visibilityThreshold` when the browser attaches the element.
 - The grid pauses a tile when the tile leaves the viewport (`visibilityThreshold={0.01}`).
+- Layout presets live in `lib/layouts.ts`. A preset maps a tile count to a column count and a span
+  for each slot. `placeTiles` places the slots in JavaScript (dense, top-left first), so the grid
+  knows its row count. "Fit to screen" uses that row count to shrink 16:9 cells until all rows fit.
+  Below 640 px of width every preset turns into 2 columns, and a large slot spans both.
+- `CameraGrid` renders the tiles in a fixed DOM order (by camera name) and sets `gridColumn` and
+  `gridRow` on each tile. A reorder therefore never moves a DOM node. A moved `<video>` pauses and
+  the custom element runs its disconnect and connect callbacks, which would restart every stream.
+- A tile 720 px wide or more plays the main stream, a smaller tile plays `sub`. A change across that
+  width reconnects the tile.
+- A drag in the grid swaps two cameras. A drag in the Arrange panel inserts the camera before or
+  after the target row. Both use `usePointerReorder`, which works with mouse, touch and pen. The mouse
+  can drag the whole tile; touch starts only on the grip handle (`touch-none`), so the page can scroll.
+- The stored order keeps camera names that the manifest does not list, because views behind one
+  proxy share an origin and therefore share `localStorage`.
 - go2rtc basic auth exempts loopback requests. The Vite dev server therefore needs no login, and any
   process on the host can read `/api/config`. `GET /api/streams` and `GET /api/config` show camera passwords.
 - `bundle.mjs` reuses `bundle/go2rtc` when `./go2rtc --version` matches `--version` and the platform is the host.
