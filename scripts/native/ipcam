@@ -92,6 +92,7 @@ require_bundle() {
   if [ ! -f "$CONFIG" ] && [ -f "$BUNDLE_DIR/cameras.ini" ]; then render_config; fi
   [ -f "$CONFIG" ] || die "no config in $BUNDLE_DIR. Run: ipcam discover, or: ipcam config import cameras.ini"
   [ -f "$BUNDLE_DIR/cameras.json" ] && sync_routes
+  sync_view_static
   return 0
 }
 
@@ -632,6 +633,7 @@ sync_view_static() {
   [ -d "$www" ] || return 0
   for view in $(views_list); do
     [ -n "$view" ] || continue
+    [ -f "$BUNDLE_DIR/views/$view/cameras.json" ] || continue
     target="$BUNDLE_DIR/views/$view/www"
     mkdir -p "$target"
     for entry in "$www"/*; do
