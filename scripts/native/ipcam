@@ -35,6 +35,17 @@ esac
 
 die() { echo "ipcam: $1" >&2; exit 1; }
 
+NO_TERMINAL_STATUS=3
+
+need_sudo() {
+  [ "$(id -u)" = 0 ] && return 0
+  sudo -n true 2>/dev/null && return 0
+  (: </dev/tty) 2>/dev/null && return 0
+  echo "ipcam: sudo cannot ask for your password, because this shell has no terminal." >&2
+  echo "ipcam: open a terminal window and run: ipcam $1" >&2
+  exit "$NO_TERMINAL_STATUS"
+}
+
 yaml_value() {
   sed -n "/^api:/,/^[a-z]/p" "$CONFIG" | sed -n "s/^  $1: *//p" | head -1 | tr -d '"'"'"
 }
@@ -251,6 +262,7 @@ cmd_install() {
   done
   require_bundle
   allow_unsigned_binary
+  need_sudo install
   prune_instances
   for_each_instance install_instance
   [ "$link" = yes ] && do_link || true
@@ -264,6 +276,7 @@ cmd_install() {
 }
 
 cmd_uninstall() {
+  need_sudo uninstall
   for_each_instance uninstall_instance
   for old_view in $(installed_instances); do
     [ -n "$old_view" ] || continue
@@ -274,14 +287,14 @@ cmd_uninstall() {
 }
 
 cmd_start() {
-  require_bundle; allow_unsigned_binary; for_each_instance start_instance
+  require_bundle; allow_unsigned_binary; need_sudo start; for_each_instance start_instance
   if code=$(wait_for_http); then echo "Service running. HTTP $code"; else report_start_failure; exit 1; fi
 }
 
-cmd_stop() { for_each_instance stop_instance; echo "Service stopped."; }
+cmd_stop() { need_sudo stop; for_each_instance stop_instance; echo "Service stopped."; }
 
 cmd_restart() {
-  require_bundle; allow_unsigned_binary
+  require_bundle; allow_unsigned_binary; need_sudo restart
   for_each_instance stop_instance
   for_each_instance start_instance
   if code=$(wait_for_http); then echo "Service running. HTTP $code"; else report_start_failure; exit 1; fi
@@ -341,6 +354,7 @@ cmd_update() {
   fi
 
   if service_is_this_bundle; then
+    need_sudo update
     prune_instances
     for_each_instance ensure_instance
     cmd_restart
@@ -908,7 +922,7 @@ cmd_upgrade() {
   command -v curl >/dev/null 2>&1 || die "curl is not installed"
   url="https://raw.githubusercontent.com/isdaniarf/ipcam-viewer/main/install.sh"
   echo "Fetching the installer from $url"
-  IPCAM_PREFIX="$BUNDLE_DIR" IPCAM_KEEP_CONFIG=1 sh -c "curl -fsSL '$url' | sh" || die "the upgrade failed"
+  IPCAM_PREFIX="$BUNDLE_DIR" IPCAM_KEEP_CONFIG=1 sh -c "curl -fsSL '$url' | sh" || die "the upgrade did not finish"
 }
 
 cmd_version() {

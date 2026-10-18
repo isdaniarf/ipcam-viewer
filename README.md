@@ -159,7 +159,9 @@ ipcam update
 | `--replace` | Write a fresh file instead of merging. Both scans still keep the viewer login. |
 | `--deep` | Use the bundled scanner instead. It needs Node.js 22, and it also finds cameras that speak no ONVIF, and reports the vendor and the open ports. |
 
-`ipcam upgrade` installs a newer release later and keeps the config.
+`ipcam upgrade` installs a newer release later and keeps the config. Run it in a terminal window,
+because the service step asks for your password. With no terminal, the upgrade installs the files,
+skips the service step, and tells you to run `ipcam install` in a terminal.
 
 ### Installer options
 

@@ -121,7 +121,21 @@ if [ -f "$PREFIX/go2rtc.yaml" ]; then
   say ""
   say "Config found. Starting the service."
   say "This asks for your password: the service is a system daemon."
-  "$PREFIX/ipcam" install --no-link
+  status=0
+  "$PREFIX/ipcam" install --no-link || status=$?
+  case $status in
+    0) ;;
+    3)
+      say ""
+      say "The files are installed. The service step did not run."
+      ;;
+    *)
+      say ""
+      say "The files are installed, but the service step failed."
+      say "Fix the problem above, then run: ipcam install"
+      exit "$status"
+      ;;
+  esac
 else
   say ""
   say "No camera config yet. It lists your cameras and holds their passwords,"

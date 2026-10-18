@@ -222,6 +222,13 @@ It accepts a comma-separated list.
   open, so an entry that looks absent may just be stale — reopen it before concluding anything.
   Apple platform binaries (`/usr/bin/python3`) are exempt and connect fine from an agent, so do not
   probe this with one; a third-party binary (Node.js, Developer ID signed) reproduces it exactly.
+- Every `ipcam` command that changes the service calls `need_sudo` first. With no root, no cached
+  `sudo` and no `/dev/tty`, `sudo` cannot ask for the password. This happens in a Claude Code `!`
+  command, in cron and in CI. `need_sudo` then exits with status 3 and a clear message. Before this,
+  `stop_macos` ignored the failed `sudo`, so `ipcam stop` printed "Service stopped." and exited 0
+  while the service still ran. `cmd_install` calls `need_sudo` after `require_bundle`, so the route
+  folders and the view copies are synced first. `install.sh` reads status 3 as "files installed,
+  service step left" and exits 0. Any other failure of the service step exits non-zero.
 - Release archives hold `ipcam`, `www/`, `service/` and `build-info` only. No binary and no config:
   `install.sh` reads `go2rtc=` from `build-info` and fetches that binary from go2rtc's own upstream release.
 - The config never ships in a release. `ipcam config export|import` moves `cameras.ini`, `go2rtc.yaml`
