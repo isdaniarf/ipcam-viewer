@@ -282,12 +282,14 @@ END {
     if (!has(vname, "cameras")) { err(vwhere " needs `cameras`, a comma separated list of camera names."); continue }
     m = split(get(vname, "cameras"), raw, ",")
     nsel = 0; missing = ""
+    split("", chosen)
     for (i = 1; i <= m; i++) {
       c = trim(raw[i]); if (c == "") continue
       if (!(c in cam_index)) { missing = missing (missing == "" ? "" : ", ") c; continue }
-      pick[++nsel] = cam_index[c]
+      chosen[cam_index[c]] = 1
     }
     if (missing != "") { err(vwhere " names no such camera: " missing); continue }
+    for (i = 1; i <= ncams; i++) if (i in chosen) pick[++nsel] = i
     if (nsel == 0) { err(vwhere " needs `cameras`, a comma separated list of camera names."); continue }
     vdir = out "/views/" vshort
     system("mkdir -p " vdir)

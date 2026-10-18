@@ -200,6 +200,34 @@ username = u
 password = p
 rtsp.path = /s1
 `,
+  view_order: `
+[proxy]
+listen = :80
+
+[server]
+listen = :8081
+username = admin
+password = adminpw
+
+[view:guest]
+listen = :8082
+username = guest
+password = guestpw
+cameras = yard, cam, yard
+
+[cam]
+host = 10.0.0.1
+username = u
+password = p
+rtsp.path = /s1
+onvif.port = 2020
+
+[yard]
+host = 10.0.0.3
+username = u
+password = p
+onvif.port = 2020
+`,
   allow_paths_override: `
 [server]
 password = x
