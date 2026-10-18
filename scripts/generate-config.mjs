@@ -170,10 +170,10 @@ export function generate(options = {}) {
   const warnings = [];
 
   const { cameras, server, views: rawViews, proxy: rawProxy } = readCamerasFile(camerasFile, errors);
-  const { streams, manifest } = buildCameras(cameras, errors, warnings);
+  const { streams, manifest, onvif } = buildCameras(cameras, errors, warnings);
   const serverConfig = target === "native" ? buildServer(server, errors) : null;
   const views = target === "native" ? buildViews(rawViews ?? [], cameras, server, errors) : [];
-  const proxy = target === "native" ? buildProxy(rawProxy, serverConfig, views, errors) : null;
+  const proxy = target === "native" ? buildProxy(rawProxy, serverConfig, views, errors, onvif) : null;
   if (errors.length > 0) throw new ConfigError(errors);
 
   const { candidates, candidateSource } = webrtcCandidates(server, target, warnings);

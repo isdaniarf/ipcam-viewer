@@ -165,6 +165,7 @@ END {
     if (!any) { err(where " enables no protocol. Add an `rtsp:`, `onvif:` or `tapo:` block."); continue }
 
     entry = ""
+    onvif_base = ""
     first_stream = nstreams + 1
     for (i = 1; i <= nproto; i++) {
       p = proto[i]
@@ -189,6 +190,7 @@ END {
         if (user == "") { err(where " needs `username`."); continue }
         if (pass == "") { err(where " needs `password`."); continue }
         base = "onvif://" auth(user, pass) "@" host ":" port
+        onvif_base = base
         sid[++nstreams] = name ".onvif"
         surl[nstreams] = has(name, "onvif.profile") ? base "?subtype=" get(name, "onvif.profile") : base
         block = "\"onvif\": {\"main\": " jq(name ".onvif")
@@ -211,6 +213,7 @@ END {
     cam_label[ncams] = has(name, "label") ? get(name, "label") : label_of(name)
     cam_route[ncams] = has(name, "route") ? get(name, "route") : ""
     cam_entry[ncams] = entry
+    cam_onvif[ncams] = onvif_base
   }
 
   if (nerr > 0) {
@@ -246,7 +249,12 @@ END {
 
   for (i = 1; i <= ncams; i++) pick[i] = i
   write_server(out, proxy_on ? loopback(listen) : listen, static_dir, viewer, secret, allow_list, ":8555", ":8554", ncams, 1)
-  if (proxy_on) { nacct = 0; add_account(viewer, secret, loopback(listen)) }
+  if (proxy_on) {
+    nacct = 0; add_account(viewer, secret, loopback(listen))
+    split("", steerable)
+    for (i = 1; i <= ncams; i++) steerable[i] = 1
+    acct_ptz[nacct] = steerable_names()
+  }
 
   nviews = 0
   for (s = 1; s <= nsec; s++) {
@@ -294,7 +302,12 @@ END {
     vdir = out "/views/" vshort
     system("mkdir -p " vdir)
     write_server(vdir, proxy_on ? loopback(vlisten) : vlisten, "www", vuser, vpass, vallow, vwebrtc, "", nsel, 0)
-    if (proxy_on) add_account(vuser, vpass, loopback(vlisten))
+    if (proxy_on) {
+      add_account(vuser, vpass, loopback(vlisten))
+      split("", steerable)
+      for (j = 1; j <= nsel; j++) steerable[pick[j]] = 1
+      acct_ptz[nacct] = steerable_names()
+    }
     view_names[++nviews] = vshort
   }
 
@@ -314,6 +327,8 @@ END {
       printf "tls_key %s\n", proxy_tlskey > pfile
     }
     for (i = 1; i <= nacct; i++) printf "user %s %s http://%s\n", acct_user[i], acct_pass[i], acct_backend[i] > pfile
+    for (i = 1; i <= ncams; i++) if (cam_onvif[i] != "") printf "camera %s %s\n", cam_name[i], cam_onvif[i] > pfile
+    for (i = 1; i <= nacct; i++) if (acct_ptz[i] != "") printf "ptz %s %s\n", acct_user[i], acct_ptz[i] > pfile
     close(pfile)
   } else {
     system("rm -f " out "/proxy.conf")
@@ -329,6 +344,12 @@ function loopback(address,   port) {
   port = address
   sub(/.*:/, "", port)
   return "127.0.0.1:" port
+}
+
+function steerable_names(   i, names) {
+  names = ""
+  for (i = 1; i <= ncams; i++) if ((i in steerable) && cam_onvif[i] != "") names = names (names == "" ? "" : " ") cam_name[i]
+  return names
 }
 
 function add_account(user, pass, backend,   port) {

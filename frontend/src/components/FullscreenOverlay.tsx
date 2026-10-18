@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CameraStatus } from "../lib/camera-video";
 import { PROTOCOL_LABELS, streamUrl, type Camera, type Protocol } from "../types/camera";
+import { PTZControls } from "./PTZControls";
 import { StreamStatus } from "./StreamStatus";
 import { VideoPlayer } from "./VideoPlayer";
 
@@ -10,7 +11,7 @@ interface FullscreenOverlayProps {
   onClose: () => void;
 }
 
-const FOCUSABLE = 'button, [href], video[controls], [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE = 'button:not([disabled]), [href], input, video[controls], [tabindex]:not([tabindex="-1"])';
 
 export function FullscreenOverlay({ camera, protocol, onClose }: FullscreenOverlayProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -108,6 +109,8 @@ export function FullscreenOverlay({ camera, protocol, onClose }: FullscreenOverl
           </span>
         </div>
       )}
+
+      <PTZControls key={camera.name} camera={camera.name} />
     </div>
   );
 }

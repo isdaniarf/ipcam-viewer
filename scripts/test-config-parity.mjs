@@ -403,14 +403,32 @@ password = adminpw
 listen = :8082
 username = guest
 password = guestpw
-cameras = cam
+cameras = yard, cam
 
 [cam]
 host = 10.0.0.1
 username = u
 password = p
 rtsp.path = /s1
+onvif.port = 2020
+onvif.profile = profile_1
+
+[porch]
+host = 10.0.0.2
+username = me@example.com
+password = p@ss word
+onvif.port = 2020
+
+[yard]
+host = 10.0.0.3
+username = u
+password = p
+rtsp.path = /s1
 `;
+
+function proxyLines(dir, directive) {
+  return readFileSync(join(dir, "proxy.conf"), "utf-8").split("\n").filter((line) => line.startsWith(`${directive} `));
+}
 
 function blockValue(text, block, key) {
   const lines = text.split("\n");
@@ -450,8 +468,14 @@ const shapeChecks = [
   ["every server restricts its paths", (d, r) => ["go2rtc.yaml", "views/guest/go2rtc.yaml"].every((f) => readFileSync(join(d[r], f), "utf-8").includes("allow_paths: ['/', '/assets'"))],
   ["a view carries only the cameras it was given", (d, r) => {
     const manifest = JSON.parse(readFileSync(join(d[r], "views/guest/cameras.json"), "utf-8"));
-    return manifest.cameras.length === 1 && manifest.cameras[0].name === "cam";
+    return manifest.cameras.map((camera) => camera.name).sort().join(",") === "cam,yard";
   }],
+  ["the proxy gets the ONVIF address of every ONVIF camera and no other", (d, r) =>
+    proxyLines(d[r], "camera").join("|") ===
+      "camera cam onvif://u:p@10.0.0.1:2020|camera porch onvif://me%40example.com:p%40ss%20word@10.0.0.2:2020"],
+  ["the main account can steer every ONVIF camera", (d, r) => proxyLines(d[r], "ptz").includes("ptz admin cam porch")],
+  ["a view can steer only its own ONVIF cameras", (d, r) => proxyLines(d[r], "ptz").includes("ptz guest cam")],
+  ["no account gets a second ptz line", (d, r) => proxyLines(d[r], "ptz").length === 2],
 ];
 
 const mergeProgram = resolve(here, "native", "merge-ini.awk");

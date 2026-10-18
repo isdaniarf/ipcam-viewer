@@ -28,6 +28,7 @@ type account struct {
 	password string
 	backend  string
 	proxy    *httputil.ReverseProxy
+	ptz      map[string]*ptzCamera
 }
 
 type config struct {
@@ -38,6 +39,7 @@ type config struct {
 	tlsListen string
 	tlsCert   string
 	tlsKey    string
+	cameras   map[string]*ptzCamera
 }
 
 // A browser does not reliably attach cached Basic credentials to a WebSocket
@@ -121,7 +123,18 @@ func readConfig(path string) (*config, error) {
 	}
 	defer file.Close()
 
-	cfg := &config{listen: ":80", realm: "IP Camera Viewer", accounts: map[string]*account{}}
+	cfg := &config{
+		listen:   ":80",
+		realm:    "IP Camera Viewer",
+		accounts: map[string]*account{},
+		cameras:  map[string]*ptzCamera{},
+	}
+	type ptzGrant struct {
+		line    int
+		user    string
+		cameras []string
+	}
+	var grants []ptzGrant
 	scanner := bufio.NewScanner(file)
 	line := 0
 	for scanner.Scan() {
@@ -169,7 +182,25 @@ func readConfig(path string) (*config, error) {
 				password: fields[2],
 				backend:  fields[3],
 				proxy:    httputil.NewSingleHostReverseProxy(target),
+				ptz:      map[string]*ptzCamera{},
 			}
+		case "camera":
+			if len(fields) != 3 {
+				return nil, fmt.Errorf("line %d: camera takes a name and an onvif:// address", line)
+			}
+			if _, exists := cfg.cameras[fields[1]]; exists {
+				return nil, fmt.Errorf("line %d: duplicate camera %q", line, fields[1])
+			}
+			camera, err := newPTZCamera(fields[1], fields[2])
+			if err != nil {
+				return nil, fmt.Errorf("line %d: %v", line, err)
+			}
+			cfg.cameras[fields[1]] = camera
+		case "ptz":
+			if len(fields) < 3 {
+				return nil, fmt.Errorf("line %d: ptz takes a user and at least one camera", line)
+			}
+			grants = append(grants, ptzGrant{line: line, user: fields[1], cameras: fields[2:]})
 		default:
 			return nil, fmt.Errorf("line %d: cannot read %q", line, fields[0])
 		}
@@ -180,6 +211,19 @@ func readConfig(path string) (*config, error) {
 	if len(cfg.accounts) == 0 {
 		return nil, fmt.Errorf("%s names no user", path)
 	}
+	for _, grant := range grants {
+		acct, found := cfg.accounts[grant.user]
+		if !found {
+			return nil, fmt.Errorf("line %d: ptz names the unknown user %q", grant.line, grant.user)
+		}
+		for _, name := range grant.cameras {
+			camera, found := cfg.cameras[name]
+			if !found {
+				return nil, fmt.Errorf("line %d: ptz names the unknown camera %q", grant.line, name)
+			}
+			acct.ptz[name] = camera
+		}
+	}
 	if cfg.tlsListen != "" && (cfg.tlsCert == "" || cfg.tlsKey == "") {
 		return nil, fmt.Errorf("%s sets tls_listen but no tls_cert and tls_key", path)
 	}
@@ -187,14 +231,22 @@ func readConfig(path string) (*config, error) {
 	return cfg, nil
 }
 
+func (c *config) serve(w http.ResponseWriter, r *http.Request, user string, acct *account) {
+	if r.URL.Path == ptzPath {
+		c.servePTZ(w, r, user, acct)
+		return
+	}
+	acct.proxy.ServeHTTP(w, r)
+}
+
 func (c *config) handler() http.Handler {
 	challenge := fmt.Sprintf("Basic realm=%q, charset=\"UTF-8\"", c.realm)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The cookie comes first, because the WebSocket handshake carries
 		// nothing else.
-		if _, acct := c.session(r); acct != nil {
+		if user, acct := c.session(r); acct != nil {
 			r.Header.Del("Authorization")
-			acct.proxy.ServeHTTP(w, r)
+			c.serve(w, r, user, acct)
 			return
 		}
 		user, password, ok := r.BasicAuth()
@@ -205,7 +257,7 @@ func (c *config) handler() http.Handler {
 				// The backend listens on loopback and trusts it, so the
 				// credential stops here rather than travelling further.
 				r.Header.Del("Authorization")
-				acct.proxy.ServeHTTP(w, r)
+				c.serve(w, r, user, acct)
 				return
 			}
 		}
@@ -234,7 +286,7 @@ func main() {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		log.Printf("ipcam-proxy: %s -> %s", name, cfg.accounts[name].backend)
+		log.Printf("ipcam-proxy: %s -> %s, %d ONVIF camera(s)", name, cfg.accounts[name].backend, len(cfg.accounts[name].ptz))
 	}
 
 	handler := cfg.handler()

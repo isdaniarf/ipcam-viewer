@@ -17,6 +17,7 @@ Multi-camera IP video streaming viewer. React frontend talks to go2rtc for RTSP/
 │       │   ├── ArrangePanel.tsx # Full camera order + hide/show
 │       │   ├── CameraGrid.tsx   # Places the tiles of one page
 │       │   ├── CameraCard.tsx   # Single camera tile
+│       │   ├── PTZControls.tsx  # Pan and tilt pad + presets in the fullscreen view
 │       │   ├── StreamStatus.tsx # Connecting / live / offline badge
 │       │   ├── VideoPlayer.tsx  # <camera-video> wrapper
 │       │   └── FullscreenOverlay.tsx
@@ -24,12 +25,14 @@ Multi-camera IP video streaming viewer. React frontend talks to go2rtc for RTSP/
 │       │   ├── useCameras.ts    # Fetches /cameras.json, retries on failure
 │       │   ├── useLayoutSettings.ts # Layout, page size, fit, order, hidden (localStorage)
 │       │   ├── usePointerReorder.ts # Pointer drag for the grid and the panel
+│       │   ├── usePTZ.ts        # Serial PTZ requests, move repeat, presets
 │       │   └── useElementSize.ts
 │       ├── types/
 │       │   └── camera.ts        # Camera & Protocol types
 │       └── lib/
 │           ├── layouts.ts       # Presets, tile placement, grid size
 │           ├── arrangement.ts   # Camera order helpers
+│           ├── ptz.ts           # /api/ptz client
 │           ├── video-rtc.js     # VideoRTC v1.6.0, with local changes
 │           ├── video-rtc.d.ts   # Types for the vendored player
 │           └── camera-video.ts  # <camera-video> subclass, LAN defaults
@@ -44,6 +47,7 @@ Multi-camera IP video streaming viewer. React frontend talks to go2rtc for RTSP/
 ├── install.sh                  # curl | sh entry point; installs a published release
 ├── .github/workflows/release.yml  # builds + publishes platform archives on a v* tag
 ├── bundle/                     # Generated native bundle (gitignored)
+├── proxy/                      # ipcam-proxy: auth, one address, /api/ptz (Go, no deps)
 ├── nginx/
 │   └── nginx.conf              # Serves frontend, proxies /api/ws and /api/hls
 ├── go2rtc/                     # Generated config + binary (gitignored)
@@ -103,7 +107,7 @@ used by `generate-config.mjs` and `discover-cameras.mjs`) and `scripts/native/co
 used by the installed bundle via `ipcam`). Both emit the same canonical `go2rtc.yaml` (every string
 single-quoted) and the same `cameras.json`. `scripts/test-config-parity.mjs` diffs them byte for byte
 over synthetic cases plus `cameras.ini.example` and a local `cameras.ini`; CI runs it on push and before
-every release. Extend the schema in both readers and add a parity case, or the build fails.
+every release. CI also runs `go vet` and `go test` in `proxy/`. Extend the schema in both readers and add a parity case, or the build fails.
 
 ### Stream naming convention
 
@@ -284,6 +288,23 @@ It accepts a comma-separated list.
   instance `@proxy`: label `io.ipcam-viewer.go2rtc.proxy`, its own launchd/systemd templates, and
   `binary_for`/`template_for` pick its binary and unit. `bundle.mjs` cross-compiles it with the Go
   toolchain when present; CI always does. Measured: 5.6 MB binary, ~9 MB RSS, video identical through it.
+- Pan and tilt: the proxy answers `/api/ptz` itself, after auth, and never forwards it to go2rtc.
+  Both readers add `camera <name> <onvif-url>` to `proxy.conf` for every ONVIF camera. The URL is
+  the percent-encoded ONVIF base, with no `?subtype`. They add `ptz <user> <cameras...>` for each
+  account: the main account gets every ONVIF camera, a view gets only its own, in camera order.
+  `proxy/onvif.go` signs requests with the WS-Security PasswordDigest. It first reads the camera
+  clock with the unsigned `GetSystemDateAndTime`, because the camera rejects a skewed timestamp.
+  It keeps the port of each reported XAddr and replaces the host with the configured host. It
+  uses the first profile with a `PTZConfiguration`. A camera with no PTZ XAddr (C120, C325WB)
+  gets 404, and the page hides the pad. The page repeats a held move every 400 ms. The proxy sends
+  `ContinuousMove` only when the velocity changes, and stops the camera 1.2 s after the last
+  repeat. Measured on a C210: a positive pan turns right and a positive tilt turns up. The pan
+  position number runs the other way, so do not judge the direction from `GetStatus`.
+  Tapo returns preset names unescaped (`<tt:Name>a & b</tt:Name>`), which broke the XML decode.
+  `escapeNameText` repairs the `<Name>` text, and the API refuses `<`, `>` and `&` in a new name.
+  To test against a real camera from this Mac, run a `/usr/bin/python3` TCP relay on
+  `127.0.0.1:2020` and point a `camera` line at it. A Go binary run from the shell is blocked by
+  Local Network privacy. The relay port must equal the XAddr port, because only the host changes.
 - `[proxy]` takes `tls_listen`, and then the proxy serves HTTPS as well as HTTP. `tls_cert` and
   `tls_key` default to `tls/server.crt` and `tls/server.key`, relative to the bundle, because the
   service sets the working directory there. Plain HTTP keeps listening: dropping it would strand
@@ -320,6 +341,8 @@ It accepts a comma-separated list.
   bundle root) separately from `{{BUNDLE_DIR}}` (the instance directory); labels are
   `io.ipcam-viewer.go2rtc.<view>` and units `ipcam-viewer-<view>`. `for_each_instance` drives install,
   start, stop, restart and uninstall across the main server and every view.
+  Both readers put a view's cameras in file order, not in the order of its `cameras` key, and drop a
+  repeated name. Before this, awk used the key order and the two readers disagreed.
 - The native `api` block always emits `allow_paths`, default
   `['/', '/assets', '/cameras.json', '/api/ws', '/api/hls']`, overridable by a comma-separated
   `allow_paths` under `[server]`. It gates loopback too. Measured: the page, assets, manifest, route

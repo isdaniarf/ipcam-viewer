@@ -30,6 +30,12 @@ jobs:
       - name: Check the awk and javascript config readers agree
         run: node scripts/test-config-parity.mjs
 
+      - name: Test the proxy
+        working-directory: proxy
+        run: |
+          go vet ./...
+          go test ./...
+
       - name: Build the frontend
         working-directory: frontend
         run: |

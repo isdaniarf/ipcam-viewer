@@ -18,6 +18,8 @@ It plays each stream with WebRTC. It falls back to MSE, and then to HLS.
 - Low latency playback with WebRTC.
 - A protocol selector for RTSP, ONVIF and Tapo. The app keeps your choice.
 - A fullscreen view with audio and player controls.
+- Pan and tilt for the cameras that can turn, with saved positions (presets). Each login can turn
+  only its own cameras. This feature needs the proxy.
 - A status badge for each tile: connecting, live or offline.
 - Low bandwidth use. The grid plays the substream. A tile that is 720 px wide or more plays the main
   stream. The grid pauses a tile when the tile leaves the screen. A camera on a different page or
@@ -373,7 +375,36 @@ Each user name must be unique, since the proxy tells people apart by it. `ipcam`
 alongside the rest, `ipcam status` shows it, and `ipcam logs proxy` follows its log.
 
 The proxy is a small program built for this, about 5.6 MB and 9 MB of memory, and it ships in the
-release. It authenticates and forwards, nothing else. Video measured the same through it as without.
+release. It authenticates and forwards, and it sends the pan and tilt commands. Video measured the
+same through it as without.
+
+### Pan and tilt
+
+The fullscreen view shows a direction pad for a camera that can turn. The proxy sends the commands
+to the camera over ONVIF. Pan and tilt needs two things:
+
+- A `[proxy]` section.
+- ONVIF on the camera: an `onvif.port` key, or `onvif = on`.
+
+Hold an arrow to turn the camera. The camera stops when you release the arrow. The arrow keys on the
+keyboard also work, and two arrow keys together give a diagonal move. The "Hide" button closes the
+pad, and the page keeps that choice.
+
+Save a position as a preset. Select the preset to turn the camera back to that position. Tapo
+cameras keep 8 presets. A preset name has 1 to 40 characters, with no `<`, `>` or `&`. Tapo firmware
+returns these characters unchanged in the preset list, and the list is then not valid XML for other
+ONVIF clients.
+
+Each login can turn its own cameras only:
+
+- The main account can turn every ONVIF camera.
+- A view can turn the ONVIF cameras in its `cameras` list.
+- A request for a different camera gets 404, and the camera receives nothing.
+
+The page shows no pad for a camera that cannot turn, and no pad when there is no proxy.
+
+The page repeats a held move every 400 ms. When the repeats stop for 1.2 seconds, the proxy stops
+the camera. Thus a closed tab or a lost connection does not leave the camera turning.
 
 ### What the server exposes
 
@@ -533,6 +564,8 @@ Requests from the host itself skip the password. That is go2rtc behaviour.
 
 - `cameras.ini` holds the viewer password and the camera passwords in plain text.
 - `bundle/go2rtc.yaml` holds the same values, because go2rtc reads them from there.
+- `bundle/proxy.conf` holds the login passwords. It also holds the ONVIF camera passwords, because
+  the proxy sends the pan and tilt commands.
 - The browser receives `cameras.json`. This file holds camera names and stream names only.
 - The holder of the viewer password can read the camera passwords through the go2rtc API.
   Give the viewer password to people who may know the camera passwords.
@@ -627,7 +660,7 @@ Tailscale address of the host, under `[server]`.
 | `scripts/lib/` | The INI reader and the shared config logic. No dependency. |
 | `scripts/native/config.awk` | The same reader in awk. The installed bundle uses it, so it needs no Node.js. |
 | `scripts/native/merge-ini.awk` | It merges a scan into an existing `cameras.ini`, matching on `host`. |
-| `proxy/` | The small proxy that puts every view behind one address. Go, no dependencies. |
+| `proxy/` | The small proxy that puts every view behind one address and sends pan and tilt commands over ONVIF. Go, no dependencies. |
 | `scripts/test-config-parity.mjs` | It proves the awk and JavaScript readers agree. CI runs it. |
 | `scripts/native/` | The `ipcam` command, and the launchd and systemd templates for the bundle. |
 | `install.sh` | The `curl \| sh` entry point. It installs a published release. |

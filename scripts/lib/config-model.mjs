@@ -60,7 +60,7 @@ function buildRtsp(camera, block, where, streams, entry, errors) {
   }
 }
 
-function buildOnvif(camera, block, where, streams, entry, errors) {
+function buildOnvif(camera, block, where, streams, entry, errors, onvif) {
   const user = block.username ?? camera.username;
   const pass = block.password ?? camera.password;
   const port = block.port ?? DEFAULT_PORT.onvif;
@@ -68,6 +68,7 @@ function buildOnvif(camera, block, where, streams, entry, errors) {
   if (requireText(pass, "password", where, errors) === null) return;
 
   const base = `onvif://${auth(user, pass)}@${camera.host}:${port}`;
+  onvif.push({ name: camera.name, address: base });
   const main = `${camera.name}.onvif`;
   streams[main] = block.profile ? `${base}?subtype=${block.profile}` : base;
   entry.onvif = { main };
@@ -99,6 +100,7 @@ const BUILDERS = { rtsp: buildRtsp, onvif: buildOnvif, tapo: buildTapo };
 export function buildCameras(cameras, errors, warnings) {
   const streams = {};
   const manifest = [];
+  const onvif = [];
   const seen = new Set();
   const routes = new Set();
 
@@ -151,7 +153,7 @@ export function buildCameras(cameras, errors, warnings) {
     const entry = {};
     for (const protocol of PROTOCOLS) {
       if (!enabled[protocol]) continue;
-      BUILDERS[protocol](camera, enabled[protocol], where, streams, entry, errors);
+      BUILDERS[protocol](camera, enabled[protocol], where, streams, entry, errors, onvif);
     }
     if (Object.keys(entry).length === 0) return;
 
@@ -161,7 +163,7 @@ export function buildCameras(cameras, errors, warnings) {
     manifest.push(record);
   });
 
-  return { streams, manifest };
+  return { streams, manifest, onvif };
 }
 
 export function buildServer(server, errors) {
@@ -324,7 +326,7 @@ export function toLoopback(address) {
   return `${LOOPBACK}:${port}`;
 }
 
-export function buildProxy(proxy, mainServer, views, errors) {
+export function buildProxy(proxy, mainServer, views, errors, onvif = []) {
   if (!proxy) return null;
   const listen = proxy.listen ?? ":80";
   const realm = proxy.realm ?? "IP Camera Viewer";
@@ -335,10 +337,20 @@ export function buildProxy(proxy, mainServer, views, errors) {
   const proxyPort = String(listen).split(":").pop();
 
   const accounts = [
-    { user: mainServer.username, password: mainServer.password, backend: toLoopback(mainServer.listen) },
+    {
+      user: mainServer.username,
+      password: mainServer.password,
+      backend: toLoopback(mainServer.listen),
+      ptz: onvif.map((camera) => camera.name),
+    },
   ];
   for (const view of views) {
-    accounts.push({ user: view.username, password: view.password, backend: toLoopback(view.listen) });
+    accounts.push({
+      user: view.username,
+      password: view.password,
+      backend: toLoopback(view.listen),
+      ptz: onvif.filter((camera) => view.cameras.includes(camera.name)).map((camera) => camera.name),
+    });
   }
 
   const seenUser = new Set();
@@ -352,7 +364,7 @@ export function buildProxy(proxy, mainServer, views, errors) {
     }
   }
 
-  return { listen, realm, accounts, tlsListen, tlsCert, tlsKey };
+  return { listen, realm, accounts, cameras: onvif, tlsListen, tlsCert, tlsKey };
 }
 
 export function emitProxyConfig(proxy) {
@@ -362,6 +374,12 @@ export function emitProxyConfig(proxy) {
   }
   for (const account of proxy.accounts) {
     lines.push(`user ${account.user} ${account.password} http://${account.backend}`);
+  }
+  for (const camera of proxy.cameras) {
+    lines.push(`camera ${camera.name} ${camera.address}`);
+  }
+  for (const account of proxy.accounts) {
+    if (account.ptz.length > 0) lines.push(`ptz ${account.user} ${account.ptz.join(" ")}`);
   }
   return `${lines.join("\n")}\n`;
 }
